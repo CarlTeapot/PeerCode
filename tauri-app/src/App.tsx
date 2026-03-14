@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import type { editor } from "monaco-editor";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import "./App.css";
 
@@ -24,43 +25,45 @@ function App() {
     setStatus("editor ready");
     setStatusReady(true);
 
-    editor.onDidChangeModelContent((event) => {
-      for (const change of event.changes) {
-        const offset = change.rangeOffset;
-        const deleteLen = change.rangeLength;
-        const insertText = change.text;
+    editor.onDidChangeModelContent(
+      (event: editor.IModelContentChangedEvent) => {
+        for (const change of event.changes) {
+          const offset = change.rangeOffset;
+          const deleteLen = change.rangeLength;
+          const insertText = change.text;
 
-        let opType: string, opClass: string, payload: string;
-        if (deleteLen > 0 && insertText.length > 0) {
-          opType = "replace";
-          opClass = "op-replace";
-          payload = `offset=${offset}  deleteLength=${deleteLen}  text=${JSON.stringify(insertText)}`;
-        } else if (deleteLen > 0) {
-          opType = "delete";
-          opClass = "op-delete";
-          payload = `offset=${offset}  deleteLength=${deleteLen}`;
-        } else {
-          opType = "insert";
-          opClass = "op-insert";
-          payload = `offset=${offset}  text=${JSON.stringify(insertText)}`;
+          let opType: string, opClass: string, payload: string;
+          if (deleteLen > 0 && insertText.length > 0) {
+            opType = "replace";
+            opClass = "op-replace";
+            payload = `offset=${offset}  deleteLength=${deleteLen}  text=${JSON.stringify(insertText)}`;
+          } else if (deleteLen > 0) {
+            opType = "delete";
+            opClass = "op-delete";
+            payload = `offset=${offset}  deleteLength=${deleteLen}`;
+          } else {
+            opType = "insert";
+            opClass = "op-insert";
+            payload = `offset=${offset}  text=${JSON.stringify(insertText)}`;
+          }
+
+          const wireMessage = JSON.stringify({
+            type: opType,
+            offset,
+            ...(deleteLen > 0 && { length: deleteLen }),
+            ...(insertText.length > 0 && { text: insertText }),
+          });
+
+          const count = ++eventCountRef.current;
+          const html =
+            `<span class="label">#${count}</span>` +
+            `<span class="${opClass}">[${opType}]</span> ${payload}` +
+            `<span style="color:#555; margin-left:12px;">→ wire: ${wireMessage}</span>`;
+
+          setEventLog((prev) => [...prev, { id: count, html }]);
         }
-
-        const wireMessage = JSON.stringify({
-          type: opType,
-          offset,
-          ...(deleteLen > 0 && { length: deleteLen }),
-          ...(insertText.length > 0 && { text: insertText }),
-        });
-
-        const count = ++eventCountRef.current;
-        const html =
-          `<span class="label">#${count}</span>` +
-          `<span class="${opClass}">[${opType}]</span> ${payload}` +
-          `<span style="color:#555; margin-left:12px;">→ wire: ${wireMessage}</span>`;
-
-        setEventLog((prev) => [...prev, { id: count, html }]);
-      }
-    });
+      },
+    );
   };
 
   return (

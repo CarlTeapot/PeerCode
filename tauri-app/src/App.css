@@ -1,4 +1,8 @@
-* { margin: 0; padding: 0; box-sizing: border-box; }
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
 
 body {
   background: #1e1e1e;
@@ -74,6 +78,12 @@ body {
   margin-right: 8px;
 }
 
-.op-insert { color: #7ec8a0; }
-.op-delete { color: #f48771; }
-.op-replace { color: #dcdcaa; }
+.op-insert {
+  color: #7ec8a0;
+}
+.op-delete {
+  color: #f48771;
+}
+.op-replace {
+  color: #dcdcaa;
+}
