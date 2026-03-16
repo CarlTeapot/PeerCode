@@ -1,22 +1,30 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ClientId(pub u64);
+pub struct ClientId {
+    pub value: u64,
+}
 
 impl ClientId {
-    pub const HOST: ClientId = ClientId(0);
-
-    pub fn is_host(&self) -> bool {
-        self.0 == 0
+    pub fn new(value: u64) -> Self {
+        ClientId { value }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Clock(pub u64);
+pub struct Clock {
+    pub value: u64,
+}
 
 impl Clock {
-    pub const ZERO: Clock = Clock(0);
+    pub const ZERO: Clock = Clock { value: 0 };
+
+    pub fn new(value: u64) -> Self {
+        Clock { value }
+    }
 
     pub fn advance(&self, by: u64) -> Clock {
-        Clock(self.0 + by)
+        Clock {
+            value: self.value + by,
+        }
     }
 }
 
@@ -34,7 +42,9 @@ impl BlockId {
     pub fn at_offset(&self, offset: u64) -> BlockId {
         BlockId {
             client: self.client,
-            clock: Clock(self.clock.0 + offset),
+            clock: Clock {
+                value: self.clock.value + offset,
+            },
         }
     }
 }

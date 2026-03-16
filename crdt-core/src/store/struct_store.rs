@@ -45,7 +45,7 @@ impl StructStore {
         let mut sv = StateVector::new();
         for (client, blocks) in &self.blocks {
             if let Some(last) = blocks.last() {
-                sv.update(*client, last.id.clock.0 + last.len());
+                sv.update(*client, last.id.clock.value + last.len());
             }
         }
         sv

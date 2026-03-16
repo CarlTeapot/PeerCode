@@ -9,12 +9,12 @@ pub struct Block {
     pub origin_right: Option<BlockId>,
 
     // Current neighbors.
-    pub left: Option<BlockId>,
-    pub right: Option<BlockId>,
+    left: Option<BlockId>,
+    right: Option<BlockId>,
 
     pub content: String,
 
-    pub is_deleted: bool,
+    is_deleted: bool,
 }
 
 impl Block {
@@ -35,8 +35,16 @@ impl Block {
         }
     }
 
+    pub fn left(&self) -> Option<BlockId> {
+        self.left
+    }
+
+    pub fn right(&self) -> Option<BlockId> {
+        self.right
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.content.is_empty()
     }
 
     pub fn len(&self) -> u64 {
