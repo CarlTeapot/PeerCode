@@ -15,6 +15,8 @@ pub struct Block {
     content: String,
 
     is_deleted: bool,
+
+    len: u64,
 }
 
 impl Block {
@@ -24,6 +26,8 @@ impl Block {
         origin_right: Option<BlockId>,
         content: String,
     ) -> Self {
+        let len = content.chars().count() as u64;
+
         Block {
             id,
             origin_left,
@@ -32,6 +36,7 @@ impl Block {
             right: origin_right,
             content,
             is_deleted: false,
+            len,
         }
     }
 
@@ -52,7 +57,7 @@ impl Block {
     }
 
     pub fn len(&self) -> u64 {
-        self.content.chars().count() as u64
+        self.len
     }
 
     pub fn is_deleted(&self) -> bool {
