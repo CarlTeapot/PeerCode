@@ -18,15 +18,14 @@ impl StructStore {
 
     pub fn insert(&mut self, block: Block) {
         let client = block.id.client;
-        let idx = {
-            let list = self.blocks.entry(client).or_default();
-            list.push(block);
-            list.len() - 1
-        };
-        let block_ref = &self.blocks[&client][idx];
-        self.index.insert(block_ref.id, idx);
+        let block_id = block.id; 
+        let list = self.blocks.entry(client).or_default();
+        let idx = list.len();
+        list.push(block);
+        
+        self.index.insert(block_id, idx);
     }
-
+    
     pub fn get(&self, id: &BlockId) -> Option<&Block> {
         let idx = self.index.get(id)?;
         let list = self.blocks.get(&id.client)?;

@@ -1,4 +1,5 @@
-.PHONY: help install install-linux-deps dev dev-gateway build test lint format clean
+.PHONY: help install install-linux-deps dev dev-gateway build test lint format clean \
+        format-all lint-all test-all
 
 install-linux-deps:
 	sudo apt-get update
@@ -22,6 +23,9 @@ format-go:
 format-frontend:
 	cd tauri-app && npx prettier --write "src/**/*.{ts,tsx,css}"
 
+format-all: format-crdt format-tauri format-go format-frontend
+
+
 # -------------linting ---------------
 lint-frontend:
 	cd tauri-app && npm run lint
@@ -35,6 +39,9 @@ lint-tauri:
 lint-go:
 	cd gateway && go vet ./...
 
+lint-all: lint-frontend lint-crdt lint-tauri lint-go
+
+
 # ------------- testing ---------------
 test-crdt:
 	cd crdt-core && cargo test
@@ -44,6 +51,9 @@ test-tauri:
 
 test-go:
 	cd gateway && go test -v ./...
+
+test-all: test-crdt test-tauri test-go
+
 
 # ------------- development ---------------
 
