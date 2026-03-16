@@ -12,7 +12,7 @@ pub struct Block {
     left: Option<BlockId>,
     right: Option<BlockId>,
 
-    pub content: String,
+    content: String,
 
     is_deleted: bool,
 }
@@ -41,6 +41,10 @@ impl Block {
 
     pub fn right(&self) -> Option<BlockId> {
         self.right
+    }
+
+    pub fn content(&self) -> &str {
+        &self.content
     }
 
     pub fn is_empty(&self) -> bool {
