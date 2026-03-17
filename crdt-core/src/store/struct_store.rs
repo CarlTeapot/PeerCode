@@ -4,11 +4,10 @@ use crate::structs::Block;
 use crate::types::{BlockId, ClientId};
 use std::collections::HashMap;
 
-// Strucstore: primary storage of blocks, indexed by client and clock.
+// Structstore: primary storage of blocks, indexed by client and clock.
 #[derive(Debug, Default)]
 pub struct StructStore {
     blocks: HashMap<ClientId, Vec<Block>>,
-    index: HashMap<BlockId, usize>,
 }
 
 impl StructStore {
@@ -17,26 +16,31 @@ impl StructStore {
     }
 
     pub fn insert(&mut self, block: Block) {
-        let client = block.id.client;
-        let block_id = block.id;
-        let list = self.blocks.entry(client).or_default();
-        let idx = list.len();
+        let list = self.blocks.entry(block.id.client).or_default();
         list.push(block);
+    }
 
-        self.index.insert(block_id, idx);
+    pub fn insert_after_block(&mut self, prev_block_id: &BlockId, block: Block) {
+        let client = prev_block_id.client;
+        let list = self
+            .blocks
+            .get_mut(&client)
+            .expect("client list must exist");
+        let idx = Self::find_index(list, prev_block_id.clock.value).expect("prev block must exist");
+        list.insert(idx + 1, block);
     }
 
     pub fn get(&self, id: &BlockId) -> Option<&Block> {
-        let idx = self.index.get(id)?;
         let list = self.blocks.get(&id.client)?;
-        list.get(*idx)
+        let idx = Self::find_index(list, id.clock.value)?;
+        Some(&list[idx])
     }
 
     /// Look up a block mutably
     pub fn get_mut(&mut self, id: &BlockId) -> Option<&mut Block> {
-        let idx = *self.index.get(id)?;
         let list = self.blocks.get_mut(&id.client)?;
-        list.get_mut(idx)
+        let idx = Self::find_index(list, id.clock.value)?;
+        Some(&mut list[idx])
     }
 
     /// Compute the current StateVector from the store.
@@ -44,10 +48,24 @@ impl StructStore {
         let mut sv = StateVector::new();
         for (client, blocks) in &self.blocks {
             if let Some(last) = blocks.last() {
-                sv.update(*client, last.id.clock.value + last.len());
+                sv.update(*client, last.id.clock.value + last.len);
             }
         }
         sv
+    }
+
+    fn find_index(list: &[Block], clock: u64) -> Option<usize> {
+        let result = list.partition_point(|b| b.id.clock.value <= clock);
+        if result == 0 {
+            return None;
+        }
+        let idx = result - 1;
+        let b = &list[idx];
+        if clock < b.id.clock.value + b.len {
+            Some(idx)
+        } else {
+            None
+        }
     }
 
     // Empty for now , will implement later when we have the basic structure in place
