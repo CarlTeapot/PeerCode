@@ -14,9 +14,9 @@ pub struct Block {
 
     content: String,
 
-    is_deleted: bool,
+    pub is_deleted: bool,
 
-    len: u64,
+    pub len: u64,
 }
 
 impl Block {
@@ -52,20 +52,20 @@ impl Block {
         &self.content
     }
 
+    pub fn set_content(&mut self, content: String) {
+        self.len = content.chars().count() as u64;
+        self.content = content;
+    }
+
+    pub fn set_left(&mut self, id: Option<BlockId>) {
+        self.left = id;
+    }
+
+    pub fn set_right(&mut self, id: Option<BlockId>) {
+        self.right = id;
+    }
     pub fn is_empty(&self) -> bool {
         self.content.is_empty()
-    }
-
-    pub fn len(&self) -> u64 {
-        self.len
-    }
-
-    pub fn is_deleted(&self) -> bool {
-        self.is_deleted
-    }
-
-    pub fn delete(&mut self) {
-        self.is_deleted = true;
     }
 
     // empty for now , will implement later when we have the basic structure in place
