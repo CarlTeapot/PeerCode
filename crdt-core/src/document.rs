@@ -55,7 +55,6 @@ impl Document {
 
             let old_right_block_id = block.right();
             block.set_right(Some(new_block_id));
-            block.origin_right = Some(new_block_id);
 
             (old_right_block_id, new_block)
         };
