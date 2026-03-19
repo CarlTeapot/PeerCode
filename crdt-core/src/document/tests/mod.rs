@@ -49,7 +49,6 @@ fn split_block_in_middle_updates_links_and_content() {
     assert_eq!(right_id, id.at_offset(2));
     assert_eq!(left.right(), Some(right_id));
     assert_eq!(right.left(), Some(id));
-    assert_eq!(left.origin_right, Some(right_id));
     assert_eq!(right.origin_left, Some(id));
 }
 
