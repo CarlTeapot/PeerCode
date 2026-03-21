@@ -43,7 +43,7 @@ impl Document {
         }
 
         let mut left_neighbor: Option<BlockId> = None;
-        let mut right_neighbor: Option<BlockId>;
+        let right_neighbor: Option<BlockId>;
 
         let (block, offset) = self.get_block_and_offset_by_position(position);
         if let Some(block_id) = block {
