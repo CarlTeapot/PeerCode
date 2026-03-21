@@ -1,6 +1,6 @@
 use crate::store::{StateVector, StructStore};
 use crate::structs::Block;
-use crate::types::{BlockId, ClientId};
+use crate::types::{BlockId, ClientId, Clock};
 
 #[derive(Debug)]
 pub struct Document {
@@ -20,8 +20,77 @@ impl Document {
         }
     }
 
-    pub fn insert(&mut self, _position: u64, _content: &str) {
-        // giorgi gelashvili, dabadebuli 2004 wels
+    pub fn get_text(&self) -> String {
+        let mut text = String::new();
+        let mut curr = self.head;
+
+        while let Some(id) = curr {
+            if let Some(block) = self.store.get(&id) {
+                if !block.is_deleted {
+                    text.push_str(block.content());
+                }
+                curr = block.right();
+            } else {
+                break;
+            }
+        }
+        text
+    }
+
+    pub fn insert(&mut self, position: u64, content: &str) {
+        if content.is_empty() {
+            return;
+        }
+
+        let mut left_neighbor: Option<BlockId> = None;
+        let mut right_neighbor: Option<BlockId>;
+
+        let (block, offset) = self.get_block_and_offset_by_position(position);
+        if let Some(block_id) = block {
+            if offset == 0 {
+                let block = self.store.get(&block_id).unwrap();
+                left_neighbor = block.left();
+                right_neighbor = Some(block_id);
+            } else {
+                self.split_block(block_id, offset);
+                left_neighbor = Some(block_id);
+                right_neighbor = self.store.get(&block_id).unwrap().right();
+            }
+        } else {
+            let mut curr = self.head;
+            while let Some(id) = curr {
+                left_neighbor = Some(id);
+                curr = self.store.get(&id).unwrap().right();
+            }
+            right_neighbor = None;
+        }
+
+        let next_clock = self.state_vector.get(&self.client_id);
+        let new_id = BlockId::new(self.client_id, Clock::new(next_clock));
+
+        let new_block = Block::new(new_id, left_neighbor, right_neighbor, content.to_string());
+
+        let block_len = new_block.len;
+        self.store.insert(new_block);
+
+        if let Some(left_id) = left_neighbor {
+            self.store
+                .get_mut(&left_id)
+                .unwrap()
+                .set_right(Some(new_id));
+        } else {
+            self.head = Some(new_id);
+        }
+
+        if let Some(right_id) = right_neighbor {
+            self.store
+                .get_mut(&right_id)
+                .unwrap()
+                .set_left(Some(new_id));
+        }
+
+        self.state_vector
+            .update(self.client_id, next_clock + block_len);
     }
 
     pub fn delete(&mut self, _position: u64, _length: u64) {

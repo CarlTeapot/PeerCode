@@ -35,6 +35,57 @@ fn doc_with_two_blocks(left: &str, right: &str) -> (Document, BlockId, BlockId) 
 }
 
 #[test]
+fn insert_into_empty_document() {
+    let mut doc = Document::new(ClientId::new(1));
+    doc.insert(0, "Test");
+
+    assert_eq!(doc.get_text(), "Test");
+    assert_eq!(doc.state_vector.get(&ClientId::new(1)), 4);
+}
+
+#[test]
+fn insert_append_prepend_and_middle() {
+    let mut doc = Document::new(ClientId::new(1));
+
+    doc.insert(0, "Vaime");
+    assert_eq!(doc.get_text(), "Vaime");
+
+    doc.insert(0, "Vuime ");
+    assert_eq!(doc.get_text(), "Vuime Vaime");
+
+    doc.insert(11, "!");
+    assert_eq!(doc.get_text(), "Vuime Vaime!");
+
+    doc.insert(5, ", :O");
+    assert_eq!(doc.get_text(), "Vuime, :O Vaime!");
+}
+
+#[test]
+fn insert_middle_maintains_correct_origins() {
+    let mut doc = Document::new(ClientId::new(1));
+
+    doc.insert(0, "AC");
+    doc.insert(1, "B");
+
+    assert_eq!(doc.get_text(), "ABC");
+    assert_eq!(doc.state_vector.get(&ClientId::new(1)), 3);
+
+    let a_id = doc.head.unwrap();
+    let a_block = doc.store.get(&a_id).unwrap();
+    assert_eq!(a_block.content(), "A");
+
+    let b_id = a_block.right().unwrap();
+    let b_block = doc.store.get(&b_id).unwrap();
+    assert_eq!(b_block.content(), "B");
+
+    let c_id = b_block.right().unwrap();
+    let c_block = doc.store.get(&c_id).unwrap();
+    assert_eq!(c_block.content(), "C");
+    assert_eq!(b_block.origin_left, Some(a_id));
+    assert_eq!(b_block.origin_right, Some(c_id));
+}
+
+#[test]
 fn split_block_in_middle_updates_links_and_content() {
     let (mut doc, id) = doc_with_single_block("hello");
 
