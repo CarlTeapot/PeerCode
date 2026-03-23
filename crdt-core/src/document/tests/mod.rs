@@ -37,7 +37,7 @@ fn doc_with_two_blocks(left: &str, right: &str) -> (Document, BlockId, BlockId) 
 #[test]
 fn insert_into_empty_document() {
     let mut doc = Document::new(ClientId::new(1));
-    doc.insert(0, "Test");
+    doc.local_insert(0, "Test").unwrap();
 
     assert_eq!(doc.get_text(), "Test");
     assert_eq!(doc.state_vector.get(&ClientId::new(1)), 4);
@@ -47,16 +47,16 @@ fn insert_into_empty_document() {
 fn insert_append_prepend_and_middle() {
     let mut doc = Document::new(ClientId::new(1));
 
-    doc.insert(0, "Vaime");
+    doc.local_insert(0, "Vaime").unwrap();
     assert_eq!(doc.get_text(), "Vaime");
 
-    doc.insert(0, "Vuime ");
+    doc.local_insert(0, "Vuime ").unwrap();
     assert_eq!(doc.get_text(), "Vuime Vaime");
 
-    doc.insert(11, "!");
+    doc.local_insert(11, "!").unwrap();
     assert_eq!(doc.get_text(), "Vuime Vaime!");
 
-    doc.insert(5, ", :O");
+    doc.local_insert(5, ", :O").unwrap();
     assert_eq!(doc.get_text(), "Vuime, :O Vaime!");
 }
 
@@ -64,8 +64,8 @@ fn insert_append_prepend_and_middle() {
 fn insert_middle_maintains_correct_origins() {
     let mut doc = Document::new(ClientId::new(1));
 
-    doc.insert(0, "AC");
-    doc.insert(1, "B");
+    doc.local_insert(0, "AC").unwrap();
+    doc.local_insert(1, "B").unwrap();
 
     assert_eq!(doc.get_text(), "ABC");
     assert_eq!(doc.state_vector.get(&ClientId::new(1)), 3);
@@ -174,7 +174,7 @@ fn split_deleted_block_keeps_both_halves_deleted() {
 fn get_block_and_offset_by_position_finds_first_block() {
     let (doc, left_id, _) = doc_with_two_blocks("abc", "def");
 
-    let (found, offset) = doc.get_block_and_offset_by_position(2);
+    let (found, offset, _tail) = doc.get_block_and_offset_by_position(2);
 
     assert_eq!(found, Some(left_id));
     assert_eq!(offset, 2);
@@ -184,7 +184,7 @@ fn get_block_and_offset_by_position_finds_first_block() {
 fn get_block_and_offset_by_position_finds_second_block() {
     let (doc, _, right_id) = doc_with_two_blocks("abc", "def");
 
-    let (found, offset) = doc.get_block_and_offset_by_position(4);
+    let (found, offset, _tail) = doc.get_block_and_offset_by_position(4);
 
     assert_eq!(found, Some(right_id));
     assert_eq!(offset, 1);
@@ -194,7 +194,7 @@ fn get_block_and_offset_by_position_finds_second_block() {
 fn get_block_and_offset_by_position_returns_none_past_end() {
     let (doc, _, _) = doc_with_two_blocks("abc", "def");
 
-    let (found, offset) = doc.get_block_and_offset_by_position(7);
+    let (found, offset, _tail) = doc.get_block_and_offset_by_position(7);
 
     assert_eq!(found, None);
     assert_eq!(offset, 1);
@@ -216,7 +216,7 @@ fn get_block_and_offset_by_position_uses_character_offsets_for_unicode() {
     doc.store.insert(left);
     doc.store.insert(right);
 
-    let (found, offset) = doc.get_block_and_offset_by_position(2);
+    let (found, offset, _tail) = doc.get_block_and_offset_by_position(2);
 
     assert_eq!(found, Some(right_id));
     assert_eq!(offset, 0);

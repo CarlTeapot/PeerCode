@@ -1,6 +1,6 @@
 use crate::store::{StateVector, StructStore};
 use crate::structs::Block;
-use crate::types::{BlockId, ClientId, Clock};
+use crate::types::{BlockId, ClientId, Clock, DocumentError};
 
 #[derive(Debug)]
 pub struct Document {
@@ -37,15 +37,16 @@ impl Document {
         text
     }
 
-    pub fn insert(&mut self, position: u64, content: &str) {
+    pub fn local_insert(&mut self, position: u64, content: &str) -> Result<(), DocumentError> {
         if content.is_empty() {
-            return;
+            return Ok(());
         }
 
-        let mut left_neighbor: Option<BlockId> = None;
+        let left_neighbor: Option<BlockId>;
         let right_neighbor: Option<BlockId>;
 
-        let (block, offset) = self.get_block_and_offset_by_position(position);
+        let (block, offset, tail_id) = self.get_block_and_offset_by_position(position);
+
         if let Some(block_id) = block {
             if offset == 0 {
                 let block = self.store.get(&block_id).unwrap();
@@ -57,11 +58,10 @@ impl Document {
                 right_neighbor = self.store.get(&block_id).unwrap().right();
             }
         } else {
-            let mut curr = self.head;
-            while let Some(id) = curr {
-                left_neighbor = Some(id);
-                curr = self.store.get(&id).unwrap().right();
+            if offset > 0 {
+                return Err(DocumentError::OutOfBounds(position));
             }
+            left_neighbor = tail_id;
             right_neighbor = None;
         }
 
@@ -69,8 +69,18 @@ impl Document {
         let new_id = BlockId::new(self.client_id, Clock::new(next_clock));
 
         let new_block = Block::new(new_id, left_neighbor, right_neighbor, content.to_string());
-
         let block_len = new_block.len;
+
+        let left_exists = left_neighbor.is_none_or(|id| self.store.get(&id).is_some());
+        let right_exists = right_neighbor.is_none_or(|id| self.store.get(&id).is_some());
+
+        if !left_exists {
+            return Err(DocumentError::BlockNotFound(left_neighbor.unwrap()));
+        }
+        if !right_exists {
+            return Err(DocumentError::BlockNotFound(right_neighbor.unwrap()));
+        }
+
         self.store.insert(new_block);
 
         if let Some(left_id) = left_neighbor {
@@ -91,13 +101,13 @@ impl Document {
 
         self.state_vector
             .update(self.client_id, next_clock + block_len);
+        Ok(())
     }
 
     pub fn delete(&mut self, _position: u64, _length: u64) {
         // chichikia
     }
-    //remove the annotation after using this function
-    #[allow(dead_code)]
+
     fn split_block(&mut self, block_id: BlockId, offset: u64) {
         let (right_block_id, new_block) = {
             let block = self.store.get_mut(&block_id).unwrap();
@@ -141,14 +151,16 @@ impl Document {
             .set_left(Some(new_block_id));
     }
 
-    // use this to get the block by position in the text editor
-    // offset variable is used for splitting
-    // washalet es komentarebi ro morchebit da anotaciac
-    #[allow(dead_code)]
-    fn get_block_and_offset_by_position(&self, mut position: u64) -> (Option<BlockId>, u64) {
+    fn get_block_and_offset_by_position(
+        &self,
+        mut position: u64,
+    ) -> (Option<BlockId>, u64, Option<BlockId>) {
         let mut current_block = self.head.and_then(|id| self.store.get(&id));
+        let mut tail_id = None;
 
         while let Some(block) = current_block {
+            tail_id = Some(block.id);
+
             if block.is_deleted {
                 current_block = block.right().and_then(|id| self.store.get(&id));
                 continue;
@@ -157,13 +169,13 @@ impl Document {
             let content_len = block.len;
 
             if position < content_len {
-                return (Some(block.id), position);
+                return (Some(block.id), position, tail_id);
             }
             position -= content_len;
             current_block = block.right().and_then(|id| self.store.get(&id));
         }
 
-        (None, position)
+        (None, position, tail_id)
     }
 }
 
