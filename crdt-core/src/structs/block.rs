@@ -64,8 +64,13 @@ impl Block {
     pub fn set_right(&mut self, id: Option<BlockId>) {
         self.right = id;
     }
+
     pub fn is_empty(&self) -> bool {
         self.content.is_empty()
+    }
+
+    pub fn clear_content_for_gc(&mut self) {
+        self.content = String::new();
     }
 
     // empty for now , will implement later when we have the basic structure in place
