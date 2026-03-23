@@ -1,4 +1,4 @@
-use crate::store::{StateVector, StructStore};
+use crate::store::{DeleteSet, StateVector, StructStore};
 use crate::structs::Block;
 use crate::types::{BlockId, ClientId};
 
@@ -7,6 +7,8 @@ pub struct Document {
     pub client_id: ClientId,
     pub store: StructStore,
     pub state_vector: StateVector,
+    pub delete_set: DeleteSet,
+    pub seen_delete_set: DeleteSet,
     pub head: Option<BlockId>,
 }
 
@@ -16,6 +18,8 @@ impl Document {
             client_id,
             store: StructStore::new(),
             state_vector: StateVector::new(),
+            delete_set: DeleteSet::new(),
+            seen_delete_set: DeleteSet::new(),
             head: None,
         }
     }
@@ -24,17 +28,138 @@ impl Document {
         // giorgi gelashvili, dabadebuli 2004 wels
     }
 
-    pub fn delete(&mut self, _position: u64, _length: u64) {
-        // chichikia
+    pub fn delete(&mut self, position: u64, length: u64) {
+        if length == 0 {
+            return;
+        }
+
+        let (first_id, start_offset) = self.get_block_and_offset_by_position(position);
+
+        let Some(mut current_id) = first_id else {
+            return;
+        };
+
+        if start_offset > 0 {
+            self.split_block(current_id, start_offset);
+            current_id = self
+                .store
+                .get(&current_id)
+                .expect("block must exist after split")
+                .right()
+                .expect("right neighbor must exist after a non-noop split");
+        }
+
+        let mut remaining = length;
+
+        while remaining > 0 {
+            let (is_deleted, block_len, right_id) = {
+                let block = match self.store.get(&current_id) {
+                    Some(b) => b,
+                    None => break,
+                };
+                (block.is_deleted, block.len, block.right())
+            };
+
+            if is_deleted {
+                match right_id {
+                    Some(next) => {
+                        current_id = next;
+                        continue;
+                    }
+                    None => break,
+                }
+            }
+
+            if block_len > remaining {
+                self.split_block(current_id, remaining);
+            }
+
+            self.store.mark_deleted(&current_id);
+
+            let (deleted_len, next_id) = {
+                let block = self
+                    .store
+                    .get(&current_id)
+                    .expect("block must exist after mark_deleted");
+                (block.len, block.right())
+            };
+
+            self.delete_set.add(current_id, deleted_len);
+            remaining = remaining.saturating_sub(deleted_len);
+
+            match next_id {
+                Some(next) => current_id = next,
+                None => break,
+            }
+        }
     }
-    //remove the annotation after using this function
-    #[allow(dead_code)]
+
+    pub fn apply_delete_set(&mut self, remote: &DeleteSet) {
+        for (client, range) in remote.iter() {
+            let mut current_clock = range.start;
+            let end_clock = range.start + range.len;
+
+            while current_clock < end_clock {
+                let id = BlockId::new(*client, crate::types::Clock::new(current_clock));
+
+                let (block_start, block_len, block_id) = match self.store.get(&id) {
+                    Some(b) => (b.id.clock.value, b.len, b.id),
+                    None => {
+                        current_clock += 1;
+                        continue;
+                    }
+                };
+
+                let offset = current_clock - block_start;
+                if offset > 0 {
+                    self.split_block(block_id, offset);
+                    continue;
+                }
+
+                let remaining_delete = end_clock - current_clock;
+                if block_len > remaining_delete {
+                    self.split_block(block_id, remaining_delete);
+                }
+
+                self.store.mark_deleted(&block_id);
+
+                let actual_len = self
+                    .store
+                    .get(&block_id)
+                    .expect("block must exist after mark_deleted")
+                    .len;
+                current_clock += actual_len;
+            }
+        }
+
+        self.seen_delete_set.merge(remote);
+    }
+
+    pub fn collect_garbage(&mut self, confirmed: &DeleteSet) {
+        for (client, range) in confirmed.iter() {
+            let mut current_clock = range.start;
+            let end_clock = range.start + range.len;
+
+            while current_clock < end_clock {
+                let id = BlockId::new(*client, crate::types::Clock::new(current_clock));
+
+                let next_clock = match self.store.get(&id) {
+                    Some(b) => b.id.clock.value + b.len,
+                    None => current_clock + 1,
+                };
+
+                self.store.collect(&id);
+                current_clock = next_clock;
+            }
+        }
+    }
+
     fn split_block(&mut self, block_id: BlockId, offset: u64) {
         let (right_block_id, new_block) = {
             let block = self.store.get_mut(&block_id).unwrap();
 
             if offset == 0 || offset >= block.len {
-                return; // no need to split
+                return;
             };
 
             let new_block_content: String = block.content().chars().skip(offset as usize).collect();
@@ -72,10 +197,6 @@ impl Document {
             .set_left(Some(new_block_id));
     }
 
-    // use this to get the block by position in the text editor
-    // offset variable is used for splitting
-    // washalet es komentarebi ro morchebit da anotaciac
-    #[allow(dead_code)]
     fn get_block_and_offset_by_position(&self, mut position: u64) -> (Option<BlockId>, u64) {
         let mut current_block = self.head.and_then(|id| self.store.get(&id));
 
