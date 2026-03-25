@@ -51,17 +51,15 @@ impl StructStore {
         sv
     }
 
-    pub fn mark_deleted(&mut self, id: &BlockId) -> bool {
-        match self.get_mut(id) {
-            Some(block) if !block.is_deleted => {
-                block.is_deleted = true;
-                true
-            }
-            _ => false,
+    pub fn mark_deleted(&mut self, id: &BlockId) -> Option<&mut Block> {
+        let block = self.get_mut(id)?;
+        if !block.is_deleted {
+            block.is_deleted = true;
         }
+        Some(block)
     }
 
-    pub fn collect(&mut self, id: &BlockId) -> bool {
+    pub fn erase_content(&mut self, id: &BlockId) -> bool {
         match self.get_mut(id) {
             Some(block) if block.is_deleted && !block.is_empty() => {
                 block.clear_content_for_gc();

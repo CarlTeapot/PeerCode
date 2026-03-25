@@ -1,6 +1,6 @@
 use crate::store::{DeleteSet, StateVector, StructStore};
 use crate::structs::Block;
-use crate::types::{BlockId, ClientId};
+use crate::types::{BlockId, ClientId, Clock};
 
 #[derive(Debug)]
 pub struct Document {
@@ -39,14 +39,10 @@ impl Document {
             return;
         };
 
-        if start_offset > 0 {
-            self.split_block(current_id, start_offset);
-            current_id = self
-                .store
-                .get(&current_id)
-                .expect("block must exist after split")
-                .right()
-                .expect("right neighbor must exist after a non-noop split");
+        if start_offset > 0
+            && let Some(new_id) = self.split_block(current_id, start_offset)
+        {
+            current_id = new_id;
         }
 
         let mut remaining = length;
@@ -74,12 +70,10 @@ impl Document {
                 self.split_block(current_id, remaining);
             }
 
-            self.store.mark_deleted(&current_id);
-
             let (deleted_len, next_id) = {
                 let block = self
                     .store
-                    .get(&current_id)
+                    .mark_deleted(&current_id)
                     .expect("block must exist after mark_deleted");
                 (block.len, block.right())
             };
@@ -97,10 +91,10 @@ impl Document {
     pub fn apply_delete_set(&mut self, remote: &DeleteSet) {
         for (client, range) in remote.iter() {
             let mut current_clock = range.start;
-            let end_clock = range.start + range.len;
+            let end_clock = range.end();
 
             while current_clock < end_clock {
-                let id = BlockId::new(*client, crate::types::Clock::new(current_clock));
+                let id = BlockId::new(*client, Clock::new(current_clock));
 
                 let (block_start, block_len, block_id) = match self.store.get(&id) {
                     Some(b) => (b.id.clock.value, b.len, b.id),
@@ -121,13 +115,12 @@ impl Document {
                     self.split_block(block_id, remaining_delete);
                 }
 
-                self.store.mark_deleted(&block_id);
-
                 let actual_len = self
                     .store
-                    .get(&block_id)
+                    .mark_deleted(&block_id)
                     .expect("block must exist after mark_deleted")
                     .len;
+
                 current_clock += actual_len;
             }
         }
@@ -138,28 +131,28 @@ impl Document {
     pub fn collect_garbage(&mut self, confirmed: &DeleteSet) {
         for (client, range) in confirmed.iter() {
             let mut current_clock = range.start;
-            let end_clock = range.start + range.len;
+            let end_clock = range.end();
 
             while current_clock < end_clock {
-                let id = BlockId::new(*client, crate::types::Clock::new(current_clock));
+                let id = BlockId::new(*client, Clock::new(current_clock));
 
                 let next_clock = match self.store.get(&id) {
                     Some(b) => b.id.clock.value + b.len,
                     None => current_clock + 1,
                 };
 
-                self.store.collect(&id);
+                self.store.erase_content(&id);
                 current_clock = next_clock;
             }
         }
     }
 
-    fn split_block(&mut self, block_id: BlockId, offset: u64) {
+    fn split_block(&mut self, block_id: BlockId, offset: u64) -> Option<BlockId> {
         let (right_block_id, new_block) = {
             let block = self.store.get_mut(&block_id).unwrap();
 
             if offset == 0 || offset >= block.len {
-                return;
+                return None;
             };
 
             let new_block_content: String = block.content().chars().skip(offset as usize).collect();
@@ -187,14 +180,14 @@ impl Document {
         let new_block_id = new_block.id;
         self.store.insert_after_block(&block_id, new_block);
 
-        if right_block_id.is_none() {
-            return;
+        if let Some(right_id) = right_block_id {
+            self.store
+                .get_mut(&right_id)
+                .unwrap()
+                .set_left(Some(new_block_id));
         }
 
-        self.store
-            .get_mut(&right_block_id.unwrap())
-            .unwrap()
-            .set_left(Some(new_block_id));
+        Some(new_block_id)
     }
 
     fn get_block_and_offset_by_position(&self, mut position: u64) -> (Option<BlockId>, u64) {

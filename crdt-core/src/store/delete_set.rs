@@ -9,7 +9,7 @@ pub struct DeleteRange {
 
 impl DeleteRange {
     #[inline]
-    fn end(&self) -> u64 {
+    pub fn end(&self) -> u64 {
         self.start + self.len
     }
 
@@ -56,7 +56,14 @@ impl DeleteSet {
 
     pub fn contains(&self, id: &BlockId) -> bool {
         match self.ranges.get(&id.client) {
-            Some(list) => list.iter().any(|r| r.contains(id.clock.value)),
+            Some(list) => {
+                let idx = list.partition_point(|r| r.start <= id.clock.value);
+                if idx > 0 {
+                    list[idx - 1].contains(id.clock.value)
+                } else {
+                    false
+                }
+            }
             None => false,
         }
     }
