@@ -55,7 +55,7 @@ fn bid(c: u64, clock: u64) -> BlockId {
 fn split_block_in_middle_updates_links_and_content() {
     let (mut doc, id) = doc_with_single_block("hello");
 
-    doc.split_block(id, 2);
+    doc.split_block(id, 2).unwrap();
 
     let left = doc.store.get(&id).unwrap();
     let right_id = left.right().unwrap();
@@ -73,7 +73,7 @@ fn split_block_in_middle_updates_links_and_content() {
 fn split_block_at_zero_is_noop() {
     let (mut doc, id) = doc_with_single_block("hello");
 
-    doc.split_block(id, 0);
+    doc.split_block(id, 0).unwrap();
 
     let block = doc.store.get(&id).unwrap();
     assert_eq!(block.content(), "hello");
@@ -84,7 +84,7 @@ fn split_block_at_zero_is_noop() {
 fn split_block_at_len_is_noop() {
     let (mut doc, id) = doc_with_single_block("hello");
 
-    doc.split_block(id, 5);
+    doc.split_block(id, 5).unwrap();
 
     let block = doc.store.get(&id).unwrap();
     assert_eq!(block.content(), "hello");
@@ -95,7 +95,7 @@ fn split_block_at_len_is_noop() {
 fn split_block_past_len_is_noop() {
     let (mut doc, id) = doc_with_single_block("hello");
 
-    doc.split_block(id, 99);
+    doc.split_block(id, 99).unwrap();
 
     let block = doc.store.get(&id).unwrap();
     assert_eq!(block.content(), "hello");
@@ -106,7 +106,7 @@ fn split_block_past_len_is_noop() {
 fn split_block_updates_existing_right_neighbor() {
     let (mut doc, left_id, right_id) = doc_with_two_blocks("abc", "def");
 
-    doc.split_block(left_id, 1);
+    doc.split_block(left_id, 1).unwrap();
 
     let left = doc.store.get(&left_id).unwrap();
     let middle_id = left.right().unwrap();
@@ -126,7 +126,7 @@ fn split_deleted_block_keeps_both_halves_deleted() {
     let (mut doc, id) = doc_with_single_block("hello");
     doc.store.get_mut(&id).unwrap().is_deleted = true;
 
-    doc.split_block(id, 2);
+    doc.split_block(id, 2).unwrap();
 
     let left = doc.store.get(&id).unwrap();
     let right_id = left.right().unwrap();
@@ -193,35 +193,35 @@ fn get_block_and_offset_by_position_uses_character_offsets_for_unicode() {
 #[test]
 fn delete_entire_single_block() {
     let (mut doc, _) = doc_with_single_block("hello");
-    doc.delete(0, 5);
+    doc.delete(0, 5).unwrap();
     assert_eq!(visible_text(&doc), "");
 }
 
 #[test]
 fn delete_prefix() {
     let (mut doc, _) = doc_with_single_block("hello");
-    doc.delete(0, 2);
+    doc.delete(0, 2).unwrap();
     assert_eq!(visible_text(&doc), "llo");
 }
 
 #[test]
 fn delete_suffix() {
     let (mut doc, _) = doc_with_single_block("hello");
-    doc.delete(3, 2);
+    doc.delete(3, 2).unwrap();
     assert_eq!(visible_text(&doc), "hel");
 }
 
 #[test]
 fn delete_middle() {
     let (mut doc, _) = doc_with_single_block("hello");
-    doc.delete(1, 3);
+    doc.delete(1, 3).unwrap();
     assert_eq!(visible_text(&doc), "ho");
 }
 
 #[test]
 fn delete_zero_length_is_noop() {
     let (mut doc, id) = doc_with_single_block("hello");
-    doc.delete(0, 0);
+    doc.delete(0, 0).unwrap();
     assert!(!doc.store.get(&id).unwrap().is_deleted);
     assert_eq!(visible_text(&doc), "hello");
 }
@@ -229,21 +229,21 @@ fn delete_zero_length_is_noop() {
 #[test]
 fn delete_records_in_local_delete_set() {
     let (mut doc, id) = doc_with_single_block("hello");
-    doc.delete(0, 5);
+    doc.delete(0, 5).unwrap();
     assert!(doc.delete_set.contains(&id));
 }
 
 #[test]
 fn delete_does_not_pollute_seen_delete_set() {
     let (mut doc, id) = doc_with_single_block("hello");
-    doc.delete(0, 5);
+    doc.delete(0, 5).unwrap();
     assert!(!doc.seen_delete_set.contains(&id));
 }
 
 #[test]
 fn delete_split_records_correct_range_in_delete_set() {
     let (mut doc, _) = doc_with_single_block("hello");
-    doc.delete(1, 3);
+    doc.delete(1, 3).unwrap();
     assert!(doc.delete_set.contains(&bid(1, 1)));
     assert!(doc.delete_set.contains(&bid(1, 2)));
     assert!(doc.delete_set.contains(&bid(1, 3)));
@@ -269,7 +269,7 @@ fn delete_skips_already_deleted_tombstones() {
 
     doc.store.mark_deleted(&id_a);
 
-    doc.delete(0, 1);
+    doc.delete(0, 1).unwrap();
 
     assert!(doc.store.get(&id_b).unwrap().is_deleted);
     assert_eq!(visible_text(&doc), "");
@@ -278,7 +278,7 @@ fn delete_skips_already_deleted_tombstones() {
 #[test]
 fn delete_across_two_blocks() {
     let (mut doc, _, _) = doc_with_two_blocks("abc", "def");
-    doc.delete(1, 4); // "bcd e" → visible: "af"
+    doc.delete(1, 4).unwrap(); // "bcd e" → visible: "af"
     assert_eq!(visible_text(&doc), "af");
 }
 
@@ -286,7 +286,7 @@ fn delete_across_two_blocks() {
 fn delete_exactly_at_block_boundary() {
     // Deleting exactly the first block, nothing from the second.
     let (mut doc, left_id, right_id) = doc_with_two_blocks("abc", "def");
-    doc.delete(0, 3);
+    doc.delete(0, 3).unwrap();
     assert!(doc.store.get(&left_id).unwrap().is_deleted);
     assert!(!doc.store.get(&right_id).unwrap().is_deleted);
     assert_eq!(visible_text(&doc), "def");
@@ -299,7 +299,7 @@ fn apply_remote_delete_set_marks_blocks() {
     let mut remote = DeleteSet::new();
     remote.add(id, 5);
 
-    doc.apply_delete_set(&remote);
+    doc.apply_delete_set(&remote).unwrap();
 
     assert!(doc.store.get(&id).unwrap().is_deleted);
 }
@@ -311,8 +311,8 @@ fn apply_delete_set_is_idempotent() {
     let mut remote = DeleteSet::new();
     remote.add(id, 5);
 
-    doc.apply_delete_set(&remote);
-    doc.apply_delete_set(&remote);
+    doc.apply_delete_set(&remote).unwrap();
+    doc.apply_delete_set(&remote).unwrap();
 
     assert!(doc.store.get(&id).unwrap().is_deleted);
 }
@@ -324,7 +324,7 @@ fn apply_delete_set_records_in_seen_not_local() {
     let mut remote = DeleteSet::new();
     remote.add(id, 5);
 
-    doc.apply_delete_set(&remote);
+    doc.apply_delete_set(&remote).unwrap();
 
     assert!(
         doc.seen_delete_set.contains(&id),
@@ -341,7 +341,7 @@ fn apply_delete_set_records_in_seen_not_local() {
 #[test]
 fn collect_garbage_clears_content_of_confirmed_deleted_blocks() {
     let (mut doc, id) = doc_with_single_block("hello");
-    doc.delete(0, 5);
+    doc.delete(0, 5).unwrap();
 
     let confirmed = doc.delete_set.clone();
     doc.collect_garbage(&confirmed);
@@ -354,7 +354,7 @@ fn collect_garbage_clears_content_of_confirmed_deleted_blocks() {
 #[test]
 fn collect_garbage_preserves_block_len_after_clearing_content() {
     let (mut doc, id) = doc_with_single_block("hello");
-    doc.delete(0, 5);
+    doc.delete(0, 5).unwrap();
 
     let confirmed = doc.delete_set.clone();
     doc.collect_garbage(&confirmed);
@@ -367,7 +367,7 @@ fn collect_garbage_preserves_block_len_after_clearing_content() {
 #[test]
 fn collect_garbage_leaves_non_deleted_blocks_alone() {
     let (mut doc, _) = doc_with_single_block("hello");
-    doc.delete(0, 2);
+    doc.delete(0, 2).unwrap();
 
     let confirmed = doc.delete_set.clone();
     doc.collect_garbage(&confirmed);
@@ -378,8 +378,8 @@ fn collect_garbage_leaves_non_deleted_blocks_alone() {
 #[test]
 fn collect_garbage_does_not_affect_unconfirmed_blocks() {
     let (mut doc, left_id, right_id) = doc_with_two_blocks("he", "llo");
-    doc.delete(0, 2);
-    doc.delete(2, 3);
+    doc.delete(0, 2).unwrap();
+    doc.delete(2, 3).unwrap();
 
     let mut confirmed = DeleteSet::new();
     confirmed.add(left_id, 2);

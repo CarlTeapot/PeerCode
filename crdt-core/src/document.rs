@@ -1,3 +1,4 @@
+use crate::error::DocumentError;
 use crate::store::{DeleteSet, StateVector, StructStore};
 use crate::structs::Block;
 use crate::types::{BlockId, ClientId, Clock};
@@ -28,19 +29,19 @@ impl Document {
         // giorgi gelashvili, dabadebuli 2004 wels
     }
 
-    pub fn delete(&mut self, position: u64, length: u64) {
+    pub fn delete(&mut self, position: u64, length: u64) -> Result<(), DocumentError> {
         if length == 0 {
-            return;
+            return Ok(());
         }
 
         let (first_id, start_offset) = self.get_block_and_offset_by_position(position);
 
         let Some(mut current_id) = first_id else {
-            return;
+            return Ok(());
         };
 
         if start_offset > 0
-            && let Some(new_id) = self.split_block(current_id, start_offset)
+            && let Some(new_id) = self.split_block(current_id, start_offset)?
         {
             current_id = new_id;
         }
@@ -67,14 +68,14 @@ impl Document {
             }
 
             if block_len > remaining {
-                self.split_block(current_id, remaining);
+                self.split_block(current_id, remaining)?;
             }
 
             let (deleted_len, next_id) = {
                 let block = self
                     .store
                     .mark_deleted(&current_id)
-                    .expect("block must exist after mark_deleted");
+                    .ok_or(DocumentError::BlockNotFound(current_id))?;
                 (block.len, block.right())
             };
 
@@ -86,9 +87,11 @@ impl Document {
                 None => break,
             }
         }
+
+        Ok(())
     }
 
-    pub fn apply_delete_set(&mut self, remote: &DeleteSet) {
+    pub fn apply_delete_set(&mut self, remote: &DeleteSet) -> Result<(), DocumentError> {
         for (client, range) in remote.iter() {
             let mut current_clock = range.start;
             let end_clock = range.end();
@@ -106,19 +109,19 @@ impl Document {
 
                 let offset = current_clock - block_start;
                 if offset > 0 {
-                    self.split_block(block_id, offset);
+                    self.split_block(block_id, offset)?;
                     continue;
                 }
 
                 let remaining_delete = end_clock - current_clock;
                 if block_len > remaining_delete {
-                    self.split_block(block_id, remaining_delete);
+                    self.split_block(block_id, remaining_delete)?;
                 }
 
                 let actual_len = self
                     .store
                     .mark_deleted(&block_id)
-                    .expect("block must exist after mark_deleted")
+                    .ok_or(DocumentError::BlockNotFound(block_id))?
                     .len;
 
                 current_clock += actual_len;
@@ -126,6 +129,8 @@ impl Document {
         }
 
         self.seen_delete_set.merge(remote);
+
+        Ok(())
     }
 
     pub fn collect_garbage(&mut self, confirmed: &DeleteSet) {
@@ -147,12 +152,19 @@ impl Document {
         }
     }
 
-    fn split_block(&mut self, block_id: BlockId, offset: u64) -> Option<BlockId> {
+    fn split_block(
+        &mut self,
+        block_id: BlockId,
+        offset: u64,
+    ) -> Result<Option<BlockId>, DocumentError> {
         let (right_block_id, new_block) = {
-            let block = self.store.get_mut(&block_id).unwrap();
+            let block = self
+                .store
+                .get_mut(&block_id)
+                .ok_or(DocumentError::BlockNotFound(block_id))?;
 
             if offset == 0 || offset >= block.len {
-                return None;
+                return Ok(None);
             };
 
             let new_block_content: String = block.content().chars().skip(offset as usize).collect();
@@ -183,11 +195,11 @@ impl Document {
         if let Some(right_id) = right_block_id {
             self.store
                 .get_mut(&right_id)
-                .unwrap()
+                .ok_or(DocumentError::BlockNotFound(right_id))?
                 .set_left(Some(new_block_id));
         }
 
-        Some(new_block_id)
+        Ok(Some(new_block_id))
     }
 
     fn get_block_and_offset_by_position(&self, mut position: u64) -> (Option<BlockId>, u64) {
