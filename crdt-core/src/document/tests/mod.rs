@@ -221,3 +221,39 @@ fn get_block_and_offset_by_position_uses_character_offsets_for_unicode() {
     assert_eq!(found, Some(right_id));
     assert_eq!(offset, 0);
 }
+
+#[test]
+fn test_remote_insert_conflict_resolution() {
+    let mut doc_a = Document::new(ClientId::new(1));
+    let mut doc_b = Document::new(ClientId::new(2));
+
+    doc_a.local_insert(0, "A").unwrap();
+
+    let id_a = doc_a.head.unwrap();
+    let block_a = doc_a.store.get(&id_a).unwrap().clone();
+    doc_b.remote_insert(block_a).unwrap();
+
+    assert_eq!(doc_a.get_text(), "A");
+    assert_eq!(doc_b.get_text(), "A");
+
+    doc_a.local_insert(1, "X").unwrap();
+    doc_b.local_insert(1, "Y").unwrap();
+
+    assert_eq!(doc_a.get_text(), "AX");
+    assert_eq!(doc_b.get_text(), "AY");
+
+    let id_x = BlockId::new(ClientId::new(1), Clock::new(1));
+    let block_x = doc_a.store.get(&id_x).unwrap().clone();
+
+    let id_y = BlockId::new(ClientId::new(2), Clock::new(0));
+    let block_y = doc_b.store.get(&id_y).unwrap().clone();
+
+    doc_a.remote_insert(block_y).unwrap();
+    doc_b.remote_insert(block_x).unwrap();
+
+    let final_text_a = doc_a.get_text();
+    let final_text_b = doc_b.get_text();
+
+    assert_eq!(final_text_a, final_text_b, "Documents failed to converge");
+    assert_eq!(final_text_a, "AXY");
+}

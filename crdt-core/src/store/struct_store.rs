@@ -15,6 +15,10 @@ impl StructStore {
         StructStore::default()
     }
 
+    pub fn contains_key(&self, id: &BlockId) -> bool {
+        self.get(id).is_some()
+    }
+
     pub fn insert(&mut self, block: Block) {
         let list = self.blocks.entry(block.id.client).or_default();
         list.push(block);

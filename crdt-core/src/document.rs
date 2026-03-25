@@ -37,70 +37,148 @@ impl Document {
         text
     }
 
+    fn integrate(&mut self, block: Block) -> Result<BlockId, DocumentError> {
+        let block_id = block.id;
+
+        let mut left = block.origin_left;
+        let right = block.origin_right;
+
+        let mut scanning_id = if let Some(id) = left {
+            self.store
+                .get(&id)
+                .ok_or(DocumentError::BlockNotFound(id))?
+                .right()
+        } else {
+            self.head
+        };
+
+        while let Some(curr_id) = scanning_id {
+            if Some(curr_id) == right {
+                break;
+            }
+
+            let curr_block = self
+                .store
+                .get(&curr_id)
+                .ok_or(DocumentError::BlockNotFound(curr_id))?;
+
+            let o_l = curr_block.origin_left;
+            let o_r = curr_block.origin_right;
+
+            let mut conflict = false;
+            if o_l == block.origin_left {
+                if o_r == block.origin_right && block.id.client.value < curr_block.id.client.value {
+                    break;
+                }
+                conflict = true;
+            }
+
+            if !conflict {
+                break;
+            }
+
+            left = Some(curr_id);
+            scanning_id = curr_block.right();
+        }
+
+        let final_left = left;
+        let final_right = if let Some(l_id) = final_left {
+            self.store
+                .get(&l_id)
+                .ok_or(DocumentError::BlockNotFound(l_id))?
+                .right()
+        } else {
+            self.head
+        };
+
+        if let Some(id) = final_left
+            && !self.store.contains_key(&id)
+        {
+            return Err(DocumentError::BlockNotFound(id));
+        }
+        if let Some(id) = final_right
+            && !self.store.contains_key(&id)
+        {
+            return Err(DocumentError::BlockNotFound(id));
+        }
+
+        self.store.insert(block);
+
+        if let Some(l_id) = final_left {
+            self.store
+                .get_mut(&l_id)
+                .ok_or(DocumentError::BlockNotFound(l_id))?
+                .set_right(Some(block_id));
+        } else {
+            self.head = Some(block_id);
+        }
+
+        if let Some(r_id) = final_right {
+            self.store
+                .get_mut(&r_id)
+                .ok_or(DocumentError::BlockNotFound(r_id))?
+                .set_left(Some(block_id));
+        }
+
+        let b_mut = self
+            .store
+            .get_mut(&block_id)
+            .ok_or(DocumentError::BlockNotFound(block_id))?;
+        b_mut.set_left(final_left);
+        b_mut.set_right(final_right);
+
+        Ok(block_id)
+    }
+
     pub fn local_insert(&mut self, position: u64, content: &str) -> Result<(), DocumentError> {
         if content.is_empty() {
             return Ok(());
         }
 
-        let left_neighbor: Option<BlockId>;
-        let right_neighbor: Option<BlockId>;
-
         let (block, offset, tail_id) = self.get_block_and_offset_by_position(position);
 
-        if let Some(block_id) = block {
+        let (left_origin, right_origin) = if let Some(block_id) = block {
             if offset == 0 {
-                let block = self.store.get(&block_id).unwrap();
-                left_neighbor = block.left();
-                right_neighbor = Some(block_id);
+                let block_ref = self
+                    .store
+                    .get(&block_id)
+                    .ok_or(DocumentError::BlockNotFound(block_id))?;
+                (block_ref.left(), Some(block_id))
             } else {
                 self.split_block(block_id, offset);
-                left_neighbor = Some(block_id);
-                right_neighbor = self.store.get(&block_id).unwrap().right();
+                let left_ref = self
+                    .store
+                    .get(&block_id)
+                    .ok_or(DocumentError::BlockNotFound(block_id))?;
+                (Some(block_id), left_ref.right())
             }
         } else {
-            if offset > 0 {
+            if offset > 0 && self.head.is_some() {
                 return Err(DocumentError::OutOfBounds(position));
             }
-            left_neighbor = tail_id;
-            right_neighbor = None;
-        }
+            (tail_id, None)
+        };
 
         let next_clock = self.state_vector.get(&self.client_id);
         let new_id = BlockId::new(self.client_id, Clock::new(next_clock));
 
-        let new_block = Block::new(new_id, left_neighbor, right_neighbor, content.to_string());
+        let new_block = Block::new(new_id, left_origin, right_origin, content.to_string());
+
         let block_len = new_block.len;
 
-        let left_exists = left_neighbor.is_none_or(|id| self.store.get(&id).is_some());
-        let right_exists = right_neighbor.is_none_or(|id| self.store.get(&id).is_some());
-
-        if !left_exists {
-            return Err(DocumentError::BlockNotFound(left_neighbor.unwrap()));
-        }
-        if !right_exists {
-            return Err(DocumentError::BlockNotFound(right_neighbor.unwrap()));
-        }
-
-        self.store.insert(new_block);
-
-        if let Some(left_id) = left_neighbor {
-            self.store
-                .get_mut(&left_id)
-                .unwrap()
-                .set_right(Some(new_id));
-        } else {
-            self.head = Some(new_id);
-        }
-
-        if let Some(right_id) = right_neighbor {
-            self.store
-                .get_mut(&right_id)
-                .unwrap()
-                .set_left(Some(new_id));
-        }
-
+        self.integrate(new_block)?;
         self.state_vector
             .update(self.client_id, next_clock + block_len);
+
+        Ok(())
+    }
+
+    pub fn remote_insert(&mut self, block: Block) -> Result<(), DocumentError> {
+        let client = block.id.client;
+        let end_clock = block.id.clock.value + block.len;
+
+        self.integrate(block)?;
+        self.state_vector.update(client, end_clock);
         Ok(())
     }
 
