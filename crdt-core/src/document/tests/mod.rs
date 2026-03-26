@@ -1,5 +1,4 @@
 use super::Document;
-use crate::store::DeleteSet;
 use crate::structs::Block;
 use crate::types::{BlockId, ClientId, Clock};
 
@@ -33,22 +32,6 @@ fn doc_with_two_blocks(left: &str, right: &str) -> (Document, BlockId, BlockId) 
     doc.store.insert(right_block);
 
     (doc, left_id, right_id)
-}
-
-fn visible_text(doc: &Document) -> String {
-    let mut out = String::new();
-    let mut cur = doc.head.and_then(|id| doc.store.get(&id));
-    while let Some(block) = cur {
-        if !block.is_deleted {
-            out.push_str(block.content());
-        }
-        cur = block.right().and_then(|id| doc.store.get(&id));
-    }
-    out
-}
-
-fn bid(c: u64, clock: u64) -> BlockId {
-    BlockId::new(ClientId::new(c), Clock::new(clock))
 }
 
 #[test]

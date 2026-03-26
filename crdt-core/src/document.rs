@@ -1,4 +1,3 @@
-use crate::error::DocumentError;
 use crate::store::{DeleteSet, StateVector, StructStore};
 use crate::structs::Block;
 use crate::types::{BlockId, ClientId, Clock, DocumentError};
@@ -150,7 +149,7 @@ impl Document {
                     .ok_or(DocumentError::BlockNotFound(block_id))?;
                 (block_ref.left(), Some(block_id))
             } else {
-                self.split_block(block_id, offset);
+                self.split_block(block_id, offset)?;
                 let left_ref = self
                     .store
                     .get(&block_id)
