@@ -4,7 +4,6 @@ use crate::structs::Block;
 use crate::types::{BlockId, ClientId};
 use std::collections::HashMap;
 
-// Structstore: primary storage of blocks, indexed by client and clock.
 #[derive(Debug, Default)]
 pub struct StructStore {
     blocks: HashMap<ClientId, Vec<Block>>,
@@ -40,14 +39,12 @@ impl StructStore {
         Some(&list[idx])
     }
 
-    /// Look up a block mutably
     pub fn get_mut(&mut self, id: &BlockId) -> Option<&mut Block> {
         let list = self.blocks.get_mut(&id.client)?;
         let idx = Self::find_index(list, id.clock.value)?;
         Some(&mut list[idx])
     }
 
-    /// Compute the current StateVector from the store.
     pub fn state_vector(&self) -> StateVector {
         let mut sv = StateVector::new();
         for (client, blocks) in &self.blocks {
@@ -56,6 +53,24 @@ impl StructStore {
             }
         }
         sv
+    }
+
+    pub fn mark_deleted(&mut self, id: &BlockId) -> Option<&mut Block> {
+        let block = self.get_mut(id)?;
+        if !block.is_deleted {
+            block.is_deleted = true;
+        }
+        Some(block)
+    }
+
+    pub fn erase_content(&mut self, id: &BlockId) -> bool {
+        match self.get_mut(id) {
+            Some(block) if block.is_deleted && !block.is_empty() => {
+                block.clear_content_for_gc();
+                true
+            }
+            _ => false,
+        }
     }
 
     fn find_index(list: &[Block], clock: u64) -> Option<usize> {
@@ -78,8 +93,6 @@ impl StructStore {
     //pub fn split_block_at(&mut self, client: ClientId, split_clock: u64) -> Option<BlockId> {}
 
     //pub fn try_squash_tail(&mut self, client: ClientId) {}
-
-    //pub fn mark_deleted(&mut self, id: &BlockId) -> bool {}
 
     //pub fn undelete(&mut self, id: &BlockId) -> bool {}
 }
