@@ -41,9 +41,7 @@ impl Document {
         text
     }
 
-    fn integrate(&mut self, block: Block) -> Result<BlockId, DocumentError> {
-        let block_id = block.id;
-
+    fn find_insert_position(&self, block: &Block) -> Result<Option<BlockId>, DocumentError> {
         let mut left = block.origin_left;
         let right = block.origin_right;
 
@@ -69,15 +67,10 @@ impl Document {
             let o_l = curr_block.origin_left;
             let o_r = curr_block.origin_right;
 
-            let mut conflict = false;
-            if o_l == block.origin_left {
-                if o_r == block.origin_right && block.id.client.value < curr_block.id.client.value {
-                    break;
-                }
-                conflict = true;
+            if o_l != block.origin_left {
+                break;
             }
-
-            if !conflict {
+            if o_r == block.origin_right && block.id.client.value < curr_block.id.client.value {
                 break;
             }
 
@@ -85,29 +78,15 @@ impl Document {
             scanning_id = curr_block.right();
         }
 
-        let final_left = left;
-        let final_right = if let Some(l_id) = final_left {
-            self.store
-                .get(&l_id)
-                .ok_or(DocumentError::BlockNotFound(l_id))?
-                .right()
-        } else {
-            self.head
-        };
+        Ok(left)
+    }
 
-        if let Some(id) = final_left
-            && !self.store.contains_key(&id)
-        {
-            return Err(DocumentError::BlockNotFound(id));
-        }
-        if let Some(id) = final_right
-            && !self.store.contains_key(&id)
-        {
-            return Err(DocumentError::BlockNotFound(id));
-        }
-
-        self.store.insert(block);
-
+    fn link_block(
+        &mut self,
+        block_id: BlockId,
+        final_left: Option<BlockId>,
+        final_right: Option<BlockId>,
+    ) -> Result<(), DocumentError> {
         if let Some(l_id) = final_left {
             self.store
                 .get_mut(&l_id)
@@ -131,7 +110,55 @@ impl Document {
         b_mut.set_left(final_left);
         b_mut.set_right(final_right);
 
+        Ok(())
+    }
+
+    fn integrate(&mut self, block: Block) -> Result<BlockId, DocumentError> {
+        let block_id = block.id;
+
+        let final_left = self.find_insert_position(&block)?;
+        let final_right = if let Some(l_id) = final_left {
+            self.store
+                .get(&l_id)
+                .ok_or(DocumentError::BlockNotFound(l_id))?
+                .right()
+        } else {
+            self.head
+        };
+
+        self.store.insert(block);
+        self.link_block(block_id, final_left, final_right)?;
+
         Ok(block_id)
+    }
+
+    fn resolve_origins(
+        &mut self,
+        position: u64,
+    ) -> Result<(Option<BlockId>, Option<BlockId>), DocumentError> {
+        let (block, offset, tail_id) = self.get_block_and_offset_by_position(position);
+
+        if let Some(block_id) = block {
+            if offset == 0 {
+                let block_ref = self
+                    .store
+                    .get(&block_id)
+                    .ok_or(DocumentError::BlockNotFound(block_id))?;
+                Ok((block_ref.left(), Some(block_id)))
+            } else {
+                self.split_block(block_id, offset)?;
+                let left_ref = self
+                    .store
+                    .get(&block_id)
+                    .ok_or(DocumentError::BlockNotFound(block_id))?;
+                Ok((Some(block_id), left_ref.right()))
+            }
+        } else {
+            if offset > 0 && self.head.is_some() {
+                return Err(DocumentError::OutOfBounds(position));
+            }
+            Ok((tail_id, None))
+        }
     }
 
     pub fn local_insert(&mut self, position: u64, content: &str) -> Result<(), DocumentError> {
@@ -139,35 +166,11 @@ impl Document {
             return Ok(());
         }
 
-        let (block, offset, tail_id) = self.get_block_and_offset_by_position(position);
-
-        let (left_origin, right_origin) = if let Some(block_id) = block {
-            if offset == 0 {
-                let block_ref = self
-                    .store
-                    .get(&block_id)
-                    .ok_or(DocumentError::BlockNotFound(block_id))?;
-                (block_ref.left(), Some(block_id))
-            } else {
-                self.split_block(block_id, offset)?;
-                let left_ref = self
-                    .store
-                    .get(&block_id)
-                    .ok_or(DocumentError::BlockNotFound(block_id))?;
-                (Some(block_id), left_ref.right())
-            }
-        } else {
-            if offset > 0 && self.head.is_some() {
-                return Err(DocumentError::OutOfBounds(position));
-            }
-            (tail_id, None)
-        };
+        let (left_origin, right_origin) = self.resolve_origins(position)?;
 
         let next_clock = self.state_vector.get(&self.client_id);
         let new_id = BlockId::new(self.client_id, Clock::new(next_clock));
-
         let new_block = Block::new(new_id, left_origin, right_origin, content.to_string());
-
         let block_len = new_block.len;
 
         self.integrate(new_block)?;
@@ -377,7 +380,7 @@ impl Document {
             let content_len = block.len;
 
             if position < content_len {
-                return (Some(block.id), position, tail_id);
+                return (Some(block.id), position, None);
             }
             position -= content_len;
             current_block = block.right().and_then(|id| self.store.get(&id));
