@@ -25,6 +25,9 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Security Audit (npm)
+        run: npm audit --audit-level=high
+
       - name: Check formatting (Prettier)
         run: npx prettier --check "src/**/*.{ts,tsx,css}" 
         
@@ -54,6 +57,9 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+
       - name: Format (CRDT Core)
         run: cargo fmt --all -- --check
         working-directory: ./crdt-core
@@ -66,6 +72,10 @@ jobs:
         run: cargo test
         working-directory: ./crdt-core
 
+      - name: Security Audit (CRDT Core)
+        run: cargo generate-lockfile && cargo audit
+        working-directory: ./crdt-core
+
       - name: Format (Tauri)
         run: cargo fmt --all -- --check
         working-directory: ./tauri-app/src-tauri
@@ -76,6 +86,10 @@ jobs:
 
       - name: Test (Tauri)
         run: cargo test
+        working-directory: ./tauri-app/src-tauri
+
+      - name: Security Audit (Tauri)
+        run: cargo generate-lockfile && cargo audit
         working-directory: ./tauri-app/src-tauri
 
   # -------------------------------------------
@@ -92,6 +106,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.2'
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
       - name: Check Formatting
         run: go fmt ./...

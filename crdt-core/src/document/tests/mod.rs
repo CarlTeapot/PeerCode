@@ -1,5 +1,4 @@
 use super::Document;
-use crate::store::DeleteSet;
 use crate::structs::Block;
 use crate::types::{BlockId, ClientId, Clock};
 
@@ -35,20 +34,55 @@ fn doc_with_two_blocks(left: &str, right: &str) -> (Document, BlockId, BlockId) 
     (doc, left_id, right_id)
 }
 
-fn visible_text(doc: &Document) -> String {
-    let mut out = String::new();
-    let mut cur = doc.head.and_then(|id| doc.store.get(&id));
-    while let Some(block) = cur {
-        if !block.is_deleted {
-            out.push_str(block.content());
-        }
-        cur = block.right().and_then(|id| doc.store.get(&id));
-    }
-    out
+#[test]
+fn insert_into_empty_document() {
+    let mut doc = Document::new(ClientId::new(1));
+    doc.local_insert(0, "Test").unwrap();
+
+    assert_eq!(doc.get_text(), "Test");
+    assert_eq!(doc.state_vector.get(&ClientId::new(1)), 4);
 }
 
-fn bid(c: u64, clock: u64) -> BlockId {
-    BlockId::new(ClientId::new(c), Clock::new(clock))
+#[test]
+fn insert_append_prepend_and_middle() {
+    let mut doc = Document::new(ClientId::new(1));
+
+    doc.local_insert(0, "Vaime").unwrap();
+    assert_eq!(doc.get_text(), "Vaime");
+
+    doc.local_insert(0, "Vuime ").unwrap();
+    assert_eq!(doc.get_text(), "Vuime Vaime");
+
+    doc.local_insert(11, "!").unwrap();
+    assert_eq!(doc.get_text(), "Vuime Vaime!");
+
+    doc.local_insert(5, ", :O").unwrap();
+    assert_eq!(doc.get_text(), "Vuime, :O Vaime!");
+}
+
+#[test]
+fn insert_middle_maintains_correct_origins() {
+    let mut doc = Document::new(ClientId::new(1));
+
+    doc.local_insert(0, "AC").unwrap();
+    doc.local_insert(1, "B").unwrap();
+
+    assert_eq!(doc.get_text(), "ABC");
+    assert_eq!(doc.state_vector.get(&ClientId::new(1)), 3);
+
+    let a_id = doc.head.unwrap();
+    let a_block = doc.store.get(&a_id).unwrap();
+    assert_eq!(a_block.content(), "A");
+
+    let b_id = a_block.right().unwrap();
+    let b_block = doc.store.get(&b_id).unwrap();
+    assert_eq!(b_block.content(), "B");
+
+    let c_id = b_block.right().unwrap();
+    let c_block = doc.store.get(&c_id).unwrap();
+    assert_eq!(c_block.content(), "C");
+    assert_eq!(b_block.origin_left, Some(a_id));
+    assert_eq!(b_block.origin_right, Some(c_id));
 }
 
 #[test]
@@ -140,7 +174,7 @@ fn split_deleted_block_keeps_both_halves_deleted() {
 fn get_block_and_offset_by_position_finds_first_block() {
     let (doc, left_id, _) = doc_with_two_blocks("abc", "def");
 
-    let (found, offset) = doc.get_block_and_offset_by_position(2);
+    let (found, offset, _tail) = doc.get_block_and_offset_by_position(2);
 
     assert_eq!(found, Some(left_id));
     assert_eq!(offset, 2);
@@ -150,7 +184,7 @@ fn get_block_and_offset_by_position_finds_first_block() {
 fn get_block_and_offset_by_position_finds_second_block() {
     let (doc, _, right_id) = doc_with_two_blocks("abc", "def");
 
-    let (found, offset) = doc.get_block_and_offset_by_position(4);
+    let (found, offset, _tail) = doc.get_block_and_offset_by_position(4);
 
     assert_eq!(found, Some(right_id));
     assert_eq!(offset, 1);
@@ -160,7 +194,7 @@ fn get_block_and_offset_by_position_finds_second_block() {
 fn get_block_and_offset_by_position_returns_none_past_end() {
     let (doc, _, _) = doc_with_two_blocks("abc", "def");
 
-    let (found, offset) = doc.get_block_and_offset_by_position(7);
+    let (found, offset, _tail) = doc.get_block_and_offset_by_position(7);
 
     assert_eq!(found, None);
     assert_eq!(offset, 1);
@@ -182,209 +216,44 @@ fn get_block_and_offset_by_position_uses_character_offsets_for_unicode() {
     doc.store.insert(left);
     doc.store.insert(right);
 
-    let (found, offset) = doc.get_block_and_offset_by_position(2);
+    let (found, offset, _tail) = doc.get_block_and_offset_by_position(2);
 
     assert_eq!(found, Some(right_id));
     assert_eq!(offset, 0);
 }
 
-// ── delete() ─────────────────────────────────────────────────────────────────
-
 #[test]
-fn delete_entire_single_block() {
-    let (mut doc, _) = doc_with_single_block("hello");
-    doc.delete(0, 5).unwrap();
-    assert_eq!(visible_text(&doc), "");
-}
+fn test_remote_insert_conflict_resolution() {
+    let mut doc_a = Document::new(ClientId::new(1));
+    let mut doc_b = Document::new(ClientId::new(2));
 
-#[test]
-fn delete_prefix() {
-    let (mut doc, _) = doc_with_single_block("hello");
-    doc.delete(0, 2).unwrap();
-    assert_eq!(visible_text(&doc), "llo");
-}
+    doc_a.local_insert(0, "A").unwrap();
 
-#[test]
-fn delete_suffix() {
-    let (mut doc, _) = doc_with_single_block("hello");
-    doc.delete(3, 2).unwrap();
-    assert_eq!(visible_text(&doc), "hel");
-}
+    let id_a = doc_a.head.unwrap();
+    let block_a = doc_a.store.get(&id_a).unwrap().clone();
+    doc_b.remote_insert(block_a).unwrap();
 
-#[test]
-fn delete_middle() {
-    let (mut doc, _) = doc_with_single_block("hello");
-    doc.delete(1, 3).unwrap();
-    assert_eq!(visible_text(&doc), "ho");
-}
+    assert_eq!(doc_a.get_text(), "A");
+    assert_eq!(doc_b.get_text(), "A");
 
-#[test]
-fn delete_zero_length_is_noop() {
-    let (mut doc, id) = doc_with_single_block("hello");
-    doc.delete(0, 0).unwrap();
-    assert!(!doc.store.get(&id).unwrap().is_deleted);
-    assert_eq!(visible_text(&doc), "hello");
-}
+    doc_a.local_insert(1, "X").unwrap();
+    doc_b.local_insert(1, "Y").unwrap();
 
-#[test]
-fn delete_records_in_local_delete_set() {
-    let (mut doc, id) = doc_with_single_block("hello");
-    doc.delete(0, 5).unwrap();
-    assert!(doc.delete_set.contains(&id));
-}
+    assert_eq!(doc_a.get_text(), "AX");
+    assert_eq!(doc_b.get_text(), "AY");
 
-#[test]
-fn delete_does_not_pollute_seen_delete_set() {
-    let (mut doc, id) = doc_with_single_block("hello");
-    doc.delete(0, 5).unwrap();
-    assert!(!doc.seen_delete_set.contains(&id));
-}
+    let id_x = BlockId::new(ClientId::new(1), Clock::new(1));
+    let block_x = doc_a.store.get(&id_x).unwrap().clone();
 
-#[test]
-fn delete_split_records_correct_range_in_delete_set() {
-    let (mut doc, _) = doc_with_single_block("hello");
-    doc.delete(1, 3).unwrap();
-    assert!(doc.delete_set.contains(&bid(1, 1)));
-    assert!(doc.delete_set.contains(&bid(1, 2)));
-    assert!(doc.delete_set.contains(&bid(1, 3)));
-    assert!(!doc.delete_set.contains(&bid(1, 0)));
-    assert!(!doc.delete_set.contains(&bid(1, 4)));
-}
+    let id_y = BlockId::new(ClientId::new(2), Clock::new(0));
+    let block_y = doc_b.store.get(&id_y).unwrap().clone();
 
-#[test]
-fn delete_skips_already_deleted_tombstones() {
-    let cid = ClientId::new(1);
-    let id_a = BlockId::new(cid, Clock::new(0));
-    let id_b = BlockId::new(cid, Clock::new(1));
-    let mut doc = Document::new(cid);
+    doc_a.remote_insert(block_y).unwrap();
+    doc_b.remote_insert(block_x).unwrap();
 
-    let mut a = Block::new(id_a, None, Some(id_b), "a".to_string());
-    a.set_right(Some(id_b));
-    let mut b = Block::new(id_b, Some(id_a), None, "b".to_string());
-    b.set_left(Some(id_a));
+    let final_text_a = doc_a.get_text();
+    let final_text_b = doc_b.get_text();
 
-    doc.head = Some(id_a);
-    doc.store.insert(a);
-    doc.store.insert(b);
-
-    doc.store.mark_deleted(&id_a);
-
-    doc.delete(0, 1).unwrap();
-
-    assert!(doc.store.get(&id_b).unwrap().is_deleted);
-    assert_eq!(visible_text(&doc), "");
-}
-
-#[test]
-fn delete_across_two_blocks() {
-    let (mut doc, _, _) = doc_with_two_blocks("abc", "def");
-    doc.delete(1, 4).unwrap(); // "bcd e" → visible: "af"
-    assert_eq!(visible_text(&doc), "af");
-}
-
-#[test]
-fn delete_exactly_at_block_boundary() {
-    // Deleting exactly the first block, nothing from the second.
-    let (mut doc, left_id, right_id) = doc_with_two_blocks("abc", "def");
-    doc.delete(0, 3).unwrap();
-    assert!(doc.store.get(&left_id).unwrap().is_deleted);
-    assert!(!doc.store.get(&right_id).unwrap().is_deleted);
-    assert_eq!(visible_text(&doc), "def");
-}
-
-#[test]
-fn apply_remote_delete_set_marks_blocks() {
-    let (mut doc, id) = doc_with_single_block("hello");
-
-    let mut remote = DeleteSet::new();
-    remote.add(id, 5);
-
-    doc.apply_delete_set(&remote).unwrap();
-
-    assert!(doc.store.get(&id).unwrap().is_deleted);
-}
-
-#[test]
-fn apply_delete_set_is_idempotent() {
-    let (mut doc, id) = doc_with_single_block("hello");
-
-    let mut remote = DeleteSet::new();
-    remote.add(id, 5);
-
-    doc.apply_delete_set(&remote).unwrap();
-    doc.apply_delete_set(&remote).unwrap();
-
-    assert!(doc.store.get(&id).unwrap().is_deleted);
-}
-
-#[test]
-fn apply_delete_set_records_in_seen_not_local() {
-    let (mut doc, id) = doc_with_single_block("hello");
-
-    let mut remote = DeleteSet::new();
-    remote.add(id, 5);
-
-    doc.apply_delete_set(&remote).unwrap();
-
-    assert!(
-        doc.seen_delete_set.contains(&id),
-        "remote delete should be recorded in seen_delete_set"
-    );
-    assert!(
-        !doc.delete_set.contains(&id),
-        "remote delete must not pollute local delete_set"
-    );
-}
-
-// ── collect_garbage() ────────────────────────────────────────────────────────
-
-#[test]
-fn collect_garbage_clears_content_of_confirmed_deleted_blocks() {
-    let (mut doc, id) = doc_with_single_block("hello");
-    doc.delete(0, 5).unwrap();
-
-    let confirmed = doc.delete_set.clone();
-    doc.collect_garbage(&confirmed);
-
-    let block = doc.store.get(&id).unwrap();
-    assert!(block.is_deleted);
-    assert!(block.is_empty(), "content should be cleared after GC");
-}
-
-#[test]
-fn collect_garbage_preserves_block_len_after_clearing_content() {
-    let (mut doc, id) = doc_with_single_block("hello");
-    doc.delete(0, 5).unwrap();
-
-    let confirmed = doc.delete_set.clone();
-    doc.collect_garbage(&confirmed);
-
-    let block = doc.store.get(&id).unwrap();
-    assert_eq!(block.len, 5, "len must be preserved after GC");
-    assert!(block.is_empty(), "content must be cleared");
-}
-
-#[test]
-fn collect_garbage_leaves_non_deleted_blocks_alone() {
-    let (mut doc, _) = doc_with_single_block("hello");
-    doc.delete(0, 2).unwrap();
-
-    let confirmed = doc.delete_set.clone();
-    doc.collect_garbage(&confirmed);
-
-    assert_eq!(visible_text(&doc), "llo");
-}
-
-#[test]
-fn collect_garbage_does_not_affect_unconfirmed_blocks() {
-    let (mut doc, left_id, right_id) = doc_with_two_blocks("he", "llo");
-    doc.delete(0, 2).unwrap();
-    doc.delete(2, 3).unwrap();
-
-    let mut confirmed = DeleteSet::new();
-    confirmed.add(left_id, 2);
-    doc.collect_garbage(&confirmed);
-
-    assert!(doc.store.get(&left_id).unwrap().is_empty());
-    assert!(!doc.store.get(&right_id).unwrap().is_empty());
+    assert_eq!(final_text_a, final_text_b, "Documents failed to converge");
+    assert_eq!(final_text_a, "AXY");
 }

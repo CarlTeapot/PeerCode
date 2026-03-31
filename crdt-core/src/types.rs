@@ -63,3 +63,9 @@ impl Ord for BlockId {
             .then(self.client.cmp(&other.client))
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DocumentError {
+    BlockNotFound(BlockId),
+    OutOfBounds(u64),
+}
