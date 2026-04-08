@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import type { editor } from "monaco-editor";
 import Editor, { type OnMount } from "@monaco-editor/react";
+import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
 interface LogEntry {
@@ -21,47 +22,74 @@ function App() {
     }
   }, [eventLog]);
 
+  const sendInsert = async (position: number, content: string) => {
+    await invoke("insert", { position, content });
+  };
+
+  const sendDelete = async (position: number, length: number) => {
+    await invoke("delete", { position, length });
+  };
+
   const handleEditorMount: OnMount = (editor) => {
     setStatus("editor ready");
     setStatusReady(true);
 
     editor.onDidChangeModelContent(
       (event: editor.IModelContentChangedEvent) => {
-        for (const change of event.changes) {
-          const offset = change.rangeOffset;
-          const deleteLen = change.rangeLength;
-          const insertText = change.text;
+        void (async () => {
+          for (const change of event.changes) {
+            const offset = change.rangeOffset;
+            const deleteLen = change.rangeLength;
+            const insertText = change.text;
 
-          let opType: string, opClass: string, payload: string;
-          if (deleteLen > 0 && insertText.length > 0) {
-            opType = "replace";
-            opClass = "op-replace";
-            payload = `offset=${offset}  deleteLength=${deleteLen}  text=${JSON.stringify(insertText)}`;
-          } else if (deleteLen > 0) {
-            opType = "delete";
-            opClass = "op-delete";
-            payload = `offset=${offset}  deleteLength=${deleteLen}`;
-          } else {
-            opType = "insert";
-            opClass = "op-insert";
-            payload = `offset=${offset}  text=${JSON.stringify(insertText)}`;
+            let opType: string, opClass: string, payload: string;
+            if (deleteLen > 0 && insertText.length > 0) {
+              opType = "replace";
+              opClass = "op-replace";
+              payload = `offset=${offset}  deleteLength=${deleteLen}  text=${JSON.stringify(insertText)}`;
+            } else if (deleteLen > 0) {
+              opType = "delete";
+              opClass = "op-delete";
+              payload = `offset=${offset}  deleteLength=${deleteLen}`;
+            } else {
+              opType = "insert";
+              opClass = "op-insert";
+              payload = `offset=${offset}  text=${JSON.stringify(insertText)}`;
+            }
+
+            const wireMessage = JSON.stringify({
+              type: opType,
+              offset,
+              ...(deleteLen > 0 && { length: deleteLen }),
+              ...(insertText.length > 0 && { text: insertText }),
+            });
+
+            try {
+              if (deleteLen > 0) {
+                await sendDelete(offset, deleteLen);
+              }
+              if (insertText.length > 0) {
+                await sendInsert(offset, insertText);
+              }
+            } catch (error) {
+              const count = ++eventCountRef.current;
+              const errorHtml =
+                `<span class="label">#${count}</span>` +
+                `<span class="op-delete">[ipc-error]</span> ${String(error)}`;
+              setEventLog((prev) => [...prev, { id: count, html: errorHtml }]);
+              setStatus("ipc error");
+              return;
+            }
+
+            const count = ++eventCountRef.current;
+            const html =
+              `<span class="label">#${count}</span>` +
+              `<span class="${opClass}">[${opType}]</span> ${payload}` +
+              `<span style="color:#555; margin-left:12px;">→ wire: ${wireMessage}</span>`;
+
+            setEventLog((prev) => [...prev, { id: count, html }]);
           }
-
-          const wireMessage = JSON.stringify({
-            type: opType,
-            offset,
-            ...(deleteLen > 0 && { length: deleteLen }),
-            ...(insertText.length > 0 && { text: insertText }),
-          });
-
-          const count = ++eventCountRef.current;
-          const html =
-            `<span class="label">#${count}</span>` +
-            `<span class="${opClass}">[${opType}]</span> ${payload}` +
-            `<span style="color:#555; margin-left:12px;">→ wire: ${wireMessage}</span>`;
-
-          setEventLog((prev) => [...prev, { id: count, html }]);
-        }
+        })();
       },
     );
   };
@@ -77,15 +105,7 @@ function App() {
         <Editor
           height="100%"
           defaultLanguage="rust"
-          defaultValue={[
-            "// Monaco is running.",
-            "// Every edit you make fires onDidChangeModelContent.",
-            "// The event log below shows what would be sent to your Rust process.",
-            "",
-            "fn main() {",
-            '    println!("Hello, collaborator!");',
-            "}",
-          ].join("\n")}
+          defaultValue={[].join("\n")}
           theme="vs-dark"
           onMount={handleEditorMount}
           options={{
