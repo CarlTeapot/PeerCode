@@ -10,6 +10,7 @@ interface LogEntry {
 }
 
 function App() {
+  const isDevFeaturesEnabled = import.meta.env.VITE_DEV_FEATURES === "true";
   const [status, setStatus] = useState("loading...");
   const [statusReady, setStatusReady] = useState(false);
   const [eventLog, setEventLog] = useState<LogEntry[]>([]);
@@ -28,6 +29,13 @@ function App() {
 
   const sendDelete = async (position: number, length: number) => {
     await invoke("delete", { position, length });
+  };
+
+  const [loggingEnabled, setLoggingEnabled] = useState(false);
+  const toggleLogging = async () => {
+    if (!isDevFeaturesEnabled) return;
+    await invoke("toggle_crdt_logging");
+    setLoggingEnabled((prev) => !prev);
   };
 
   const handleEditorMount: OnMount = (editor) => {
@@ -98,9 +106,23 @@ function App() {
     <>
       <div className="toolbar">
         <span>Monaco Test Harness</span>
+        {isDevFeaturesEnabled && (
+          <button
+            onClick={toggleLogging}
+            style={{
+              background: loggingEnabled ? "#4a9" : "#555",
+              border: "none",
+              color: "white",
+              padding: "2px 10px",
+              cursor: "pointer",
+              borderRadius: "3px",
+            }}
+          >
+            CRDT log {loggingEnabled ? "ON" : "OFF"}
+          </button>
+        )}
         <span className={`status ${statusReady ? "ready" : ""}`}>{status}</span>
       </div>
-
       <div className="editor-container">
         <Editor
           height="100%"
@@ -116,9 +138,8 @@ function App() {
           }}
         />
       </div>
-
       <div className="log-header">
-        change event log — this is what your rust process will receive
+        change event log ? this is what your rust process will receive
       </div>
       <div className="event-log" ref={logRef}>
         {eventLog.map((entry) => (

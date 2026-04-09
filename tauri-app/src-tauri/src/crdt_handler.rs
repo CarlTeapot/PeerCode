@@ -1,7 +1,7 @@
 use tauri::State;
 
 use crate::appstate::AppState;
-
+use std::sync::atomic::Ordering;
 #[tauri::command]
 pub fn insert(state: State<AppState>, position: u64, content: String) -> Result<(), String> {
     let mut document = state
@@ -24,4 +24,13 @@ pub fn delete(state: State<AppState>, position: u64, length: u64) -> Result<(), 
     document
         .delete(position, length)
         .map_err(|err| format!("delete failed: {err:?}"))
+}
+
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub fn toggle_crdt_logging(state: tauri::State<AppState>) {
+    let current = state.crdt_logging_enabled.load(Ordering::Relaxed);
+    state
+        .crdt_logging_enabled
+        .store(!current, Ordering::Relaxed);
 }

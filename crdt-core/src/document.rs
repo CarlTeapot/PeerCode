@@ -41,6 +41,7 @@ impl Document {
         text
     }
 
+    #[cfg(debug_assertions)]
     pub fn debug_linked_list(&self) -> String {
         let mut parts = Vec::new();
         let mut curr = self.head;

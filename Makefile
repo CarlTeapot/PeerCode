@@ -1,5 +1,11 @@
-.PHONY: help install install-linux-deps dev dev-gateway build test lint format clean \
+.PHONY: help install install-linux-deps dev prod prod-build prod-run dev-gateway build test lint format clean \
         format-all lint-all test-all
+
+FRONTEND_BUILD_OUT := tauri-app/dist/index.html
+FRONTEND_BUILD_INPUTS := $(shell git ls-files tauri-app/src) tauri-app/index.html tauri-app/vite.config.ts tauri-app/package.json tauri-app/package-lock.json tauri-app/.env.production
+
+RUST_RELEASE_BIN := tauri-app/src-tauri/target/release/tauri-app
+RUST_RELEASE_INPUTS := $(shell git ls-files tauri-app/src-tauri/src crdt-core/src) tauri-app/src-tauri/Cargo.toml tauri-app/src-tauri/Cargo.lock crdt-core/Cargo.toml
 
 install-linux-deps:
 	sudo apt-get update
@@ -59,7 +65,21 @@ test-all: test-crdt test-tauri test-go
 
 # run development servers for Tauri app
 dev:
-	cd tauri-app && npm run tauri dev
+	cd tauri-app && npm run tauri:dev
+
+$(FRONTEND_BUILD_OUT): $(FRONTEND_BUILD_INPUTS)
+	cd tauri-app && npm run build
+
+$(RUST_RELEASE_BIN): $(RUST_RELEASE_INPUTS)
+	cd tauri-app && npm run tauri build -- --no-bundle
+
+prod-build: $(FRONTEND_BUILD_OUT) $(RUST_RELEASE_BIN)
+
+prod-run: $(RUST_RELEASE_BIN)
+	cd tauri-app/src-tauri && ./target/release/tauri-app
+
+# run production build/runtime for Tauri app (rebuilds only when needed)
+prod: prod-build prod-run
 
 # run development server for Go Gateway
 dev-gateway:
