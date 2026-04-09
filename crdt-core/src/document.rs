@@ -41,6 +41,39 @@ impl Document {
         text
     }
 
+    #[cfg(debug_assertions)]
+    pub fn debug_linked_list(&self) -> String {
+        let mut parts = Vec::new();
+        let mut curr = self.head;
+
+        while let Some(id) = curr {
+            if let Some(block) = self.store.get(&id) {
+                let content = if block.content().is_empty() {
+                    "<empty>".to_string()
+                } else {
+                    block.content().replace('\n', "\\n")
+                };
+
+                if block.is_deleted {
+                    parts.push(format!("[DEL:{content}]"));
+                } else {
+                    parts.push(content);
+                }
+
+                curr = block.right();
+            } else {
+                parts.push("<broken-link>".to_string());
+                break;
+            }
+        }
+
+        if parts.is_empty() {
+            "<empty>".to_string()
+        } else {
+            parts.join(" --- ")
+        }
+    }
+
     fn find_insert_position(&self, block: &Block) -> Result<Option<BlockId>, DocumentError> {
         let mut left = block.origin_left;
         let right = block.origin_right;
