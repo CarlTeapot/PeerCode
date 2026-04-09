@@ -1,5 +1,7 @@
 package hub
 
+import "net/http"
+
 // Hub owns all active Rooms.
 //
 // Responsibilities:
@@ -20,3 +22,9 @@ package hub
 //	room.Join(client)
 
 type Hub struct{}
+
+func New() *Hub { return &Hub{} }
+
+func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
+	http.Error(w, "WebSocket handler not yet implemented", http.StatusNotImplemented)
+}
