@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import type { editor } from "monaco-editor";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
 interface LogEntry {
@@ -30,6 +31,36 @@ function App() {
   const sendDelete = async (position: number, length: number) => {
     await invoke("delete", { position, length });
   };
+
+  // --- session links ---
+  const [lanUrl, setLanUrl] = useState<string | null>(null);
+  const [publicUrl, setPublicUrl] = useState<string | null>(null);
+  const [sessionStatus, setSessionStatus] = useState<string>('starting...');
+
+  useEffect(() => {
+    invoke<{ status: string; lan_url: string | null; public_url: string | null }>('get_session_info').then(info => {
+      setSessionStatus(info.status);
+      if (info.lan_url) setLanUrl(info.lan_url);
+      if (info.public_url) setPublicUrl(info.public_url);
+    });
+
+    const unlisten: (() => void)[] = [];
+    (async () => {
+      unlisten.push(await listen<{ lan_url: string | null; port: number; room_id: string }>('session://gateway-ready', (e) => {
+        setSessionStatus('host');
+        if (e.payload.lan_url) setLanUrl(e.payload.lan_url);
+      }));
+      unlisten.push(await listen<{ public_url: string; room_id: string }>('session://tunnel-ready', (e) => {
+        setPublicUrl(e.payload.public_url);
+      }));
+      unlisten.push(await listen<{ message: string }>('session://session-error', (e) => {
+        setSessionStatus('error: ' + e.payload.message);
+      }));
+    })();
+
+    return () => unlisten.forEach(fn => fn());
+  }, []);
+  // --- end session links ---
 
   const [loggingEnabled, setLoggingEnabled] = useState(false);
   const toggleLogging = async () => {
@@ -122,6 +153,16 @@ function App() {
           </button>
         )}
         <span className={`status ${statusReady ? "ready" : ""}`}>{status}</span>
+      </div>
+      {/* session link panel */}
+      <div style={{padding:'8px',background:'#1a1a2e',borderBottom:'1px solid #333',fontFamily:'monospace',fontSize:'12px'}}>
+        <span style={{color:'#aaa'}}>Session: </span>
+        <span style={{color: sessionStatus.startsWith('error') ? '#f55' : '#0f0'}}>{sessionStatus}</span>
+        {lanUrl && <div style={{marginTop:4}}><span style={{color:'#aaa'}}>LAN: </span><span style={{color:'#0ff'}}>{lanUrl}</span></div>}
+        {publicUrl && <div><span style={{color:'#aaa'}}>Public: </span><span style={{color:'#0ff'}}>{publicUrl}</span></div>}
+        {!lanUrl && !publicUrl && sessionStatus === 'starting...' && (
+          <span style={{color:'#888', marginLeft:8}}>waiting for gateway and tunnel...</span>
+        )}
       </div>
       <div className="editor-container">
         <Editor
