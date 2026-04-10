@@ -14,15 +14,19 @@ pub struct AppState {
 
 pub enum AppRole {
     Undecided,
-    Host { port: u16, room_id: String },
-    Guest { server_url: String, room_id: String },
+    Starting,
+    Host {
+        room_id: String,
+        lan_url: Option<String>,
+        public_url: Option<String>,
+    },
+    // add guest laterr 
 }
 
 pub struct HostProcesses {
     pub gateway: Option<CommandChild>,
     pub tunnel: Option<CommandChild>,
 }
-
 
 impl AppState {
     pub fn new(client_id: ClientId) -> Self {
@@ -35,6 +39,21 @@ impl AppState {
             }),
             #[cfg(debug_assertions)]
             crdt_logging_enabled: AtomicBool::new(false),
+        }
+    }
+
+    pub fn teardown_host(&self) {
+        let mut role = self.role.lock().unwrap();
+        if matches!(*role, AppRole::Starting | AppRole::Host { .. }) {
+            *role = AppRole::Undecided;
+        }
+
+        let mut procs = self.processes.lock().unwrap();
+        if let Some(child) = procs.tunnel.take() {
+            let _ = child.kill();
+        }
+        if let Some(child) = procs.gateway.take() {
+            let _ = child.kill();
         }
     }
 }

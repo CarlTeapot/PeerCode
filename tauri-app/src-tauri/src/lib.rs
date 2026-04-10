@@ -1,5 +1,6 @@
 mod appstate;
 mod crdt_handler;
+mod session;
 mod tunnel;
 
 use std::thread;
@@ -34,16 +35,36 @@ pub fn run() {
             app.manage(AppState::new(ClientId::new(random::<u64>())));
             #[cfg(debug_assertions)]
             spawn_linked_list_logger(app.handle().clone());
+
+            let _ = session::start_host_session(app.handle().clone());
+
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                let state = window.state::<AppState>();
+                let mut procs = state.processes.lock().unwrap();
+                if let Some(child) = procs.tunnel.take() {
+                    if let Err(e) = child.kill() {
+                        eprintln!("Failed to kill tunnel process: {e}");
+                    }
+                }
+                if let Some(child) = procs.gateway.take() {
+                    if let Err(e) = child.kill() {
+                        eprintln!("Failed to kill gateway process: {e}");
+                    }
+                }
+            }
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             crdt_handler::insert,
             crdt_handler::delete,
-            tunnel::start_host_session,
-            tunnel::stop_host_session,
-            tunnel::parse_join_url,
+            session::start_host_session,
+            session::stop_host_session,
+            session::parse_join_url,
+            session::get_session_info,
             #[cfg(debug_assertions)]
             crdt_handler::toggle_crdt_logging
         ])

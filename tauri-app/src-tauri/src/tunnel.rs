@@ -1,175 +1,177 @@
 use crate::appstate::{AppRole, AppState};
+use crate::session::{
+    GatewayReadyPayload, SessionErrorPayload, TunnelReadyPayload,
+    GATEWAY_READY, SESSION_ERROR, TUNNEL_READY,
+};
 use rand::Rng;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
-// ── Event Payloads (Sent to React) ────────────────────────────────────────────
 
-#[derive(Clone, serde::Serialize)]
-pub struct GatewayReadyPayload {
-    pub lan_url: String,
-    pub room_id: String,
-    pub port: u16,
+pub fn generate_room_id() -> String {
+    format!("{:08x}", rand::thread_rng().gen::<u32>())
 }
 
-#[derive(Clone, serde::Serialize)]
-pub struct TunnelReadyPayload {
-    pub public_url: String,
-    pub room_id: String,
-}
 
-#[derive(Clone, serde::Serialize)]
-pub struct SessionErrorPayload {
-    pub message: String,
-}
-
-#[derive(serde::Serialize)]
-pub struct JoinInfo {
-    pub server_url: String,
-    pub room_id: String,
-}
-
-// ── Tauri Commands (Called from React) ────────────────────────────────────────
-
-#[tauri::command]
-pub async fn start_host_session(app: AppHandle) -> Result<(), String> {
-    {
-        let state = app.state::<AppState>();
-        let role = state.role.lock().unwrap();
-        if !matches!(*role, AppRole::Undecided) {
-            return Err("A session is already running".into());
+pub fn launch(app: AppHandle, room_id: String) {
+    tauri::async_runtime::spawn(async move {
+        if let Err(msg) = run_gateway(&app, &room_id).await {
+            emit_error(&app, msg);
         }
-    }
+    });
+}
 
-    let room_id = generate_room_id();
 
-    let (mut gateway_rx, gateway_child) = app
+async fn run_gateway(app: &AppHandle, room_id: &str) -> Result<(), String> {
+    let (mut rx, child) = app
         .shell()
         .sidecar("peercode-gateway")
         .map_err(|e| format!("Gateway sidecar not found: {e}"))?
         .spawn()
         .map_err(|e| format!("Failed to spawn gateway: {e}"))?;
 
-    app.state::<AppState>().processes.lock().unwrap().gateway = Some(gateway_child);
+    {
+        let state = app.state::<AppState>();
+        let role = state.role.lock().unwrap();
+        if !matches!(*role, AppRole::Starting) {
+            let _ = child.kill();
+            return Ok(());
+        }
+        drop(role);
+        state.processes.lock().unwrap().gateway = Some(child);
+    }
 
-    tauri::async_runtime::spawn(async move {
-        while let Some(event) = gateway_rx.recv().await {
-            if let CommandEvent::Stdout(bytes) = event {
-                let line = String::from_utf8_lossy(&bytes);
-                
-                if let Some(port_str) = line.trim().strip_prefix("PORT=") {
-                    if let Ok(port) = port_str.parse::<u16>() {
-                        handle_gateway_started(app.clone(), port, room_id);
-                        break;
-                    }
+    while let Some(event) = rx.recv().await {
+        if let CommandEvent::Stdout(bytes) = event {
+            let line = String::from_utf8_lossy(&bytes);
+            if let Some(port_str) = line.trim().strip_prefix("PORT=") {
+                if let Ok(port) = port_str.parse::<u16>() {
+                    on_gateway_ready(app, port, room_id).await;
+                    return Ok(());
                 }
             }
         }
-    });
-
-    Ok(())
-}
-
-#[tauri::command]
-pub fn stop_host_session(state: State<'_, AppState>) -> Result<(), String> {
-    let mut procs = state.processes.lock().unwrap();
-    
-    if let Some(child) = procs.tunnel.take() {
-        let _ = child.kill();
     }
-    
-    if let Some(child) = procs.gateway.take() {
-        let _ = child.kill();
+
+    let still_starting =
+        matches!(*app.state::<AppState>().role.lock().unwrap(), AppRole::Starting);
+    if still_starting {
+        Err("Gateway exited before reporting its port".into())
+    } else {
+        Ok(())
     }
-    
-    *state.role.lock().unwrap() = AppRole::Undecided;
-    Ok(())
 }
 
-#[tauri::command]
-pub fn parse_join_url(url: String) -> Result<JoinInfo, String> {
-    let (base, query) = url.split_once('?').unwrap_or((&url, ""));
+async fn on_gateway_ready(app: &AppHandle, port: u16, room_id: &str) {
+    let state = app.state::<AppState>();
 
-    let room_id = query
-        .split('&')
-        .find_map(|kv| kv.strip_prefix("room="))
-        .map(|v| v.to_string())
-        .ok_or_else(|| "Missing 'room' parameter in URL".to_string())?;
+    {
+        let mut role = state.role.lock().unwrap();
+        if !matches!(*role, AppRole::Starting) {
+            return;
+        }
+        *role = AppRole::Host {
+            room_id: room_id.to_string(),
+            lan_url: None,
+            public_url: None,
+        };
+    }
 
-    let server_url = base.rfind("/ws")
-        .map(|pos| base[..pos].to_string())
-        .unwrap_or_else(|| base.trim_end_matches('/').to_string());
+    let lan_url = get_lan_url(port, room_id).await;
 
-    Ok(JoinInfo { server_url, room_id })
+    {
+        let mut role = state.role.lock().unwrap();
+        match *role {
+            AppRole::Host { lan_url: ref mut stored, .. } => *stored = lan_url.clone(),
+            _ => return,
+        }
+    }
+
+    let _ = app.emit(
+        GATEWAY_READY,
+        GatewayReadyPayload { lan_url, room_id: room_id.to_string(), port },
+    );
+
+    run_cloudflared(app.clone(), port, room_id.to_string());
 }
 
-// ── Internal Helpers ──────────────────────────────────────────────────────────
 
-fn handle_gateway_started(app: AppHandle, port: u16, room_id: String) {
-    *app.state::<AppState>().role.lock().unwrap() = AppRole::Host {
-        port,
-        room_id: room_id.clone(),
+fn run_cloudflared(app: AppHandle, port: u16, room_id: String) {
+    let url_arg = format!("http://localhost:{port}");
+
+    let sidecar = match app.shell().sidecar("cloudflared") {
+        Ok(s) => s,
+        Err(e) => return emit_error(&app, format!("cloudflared sidecar not found: {e}")),
     };
 
-    let lan_ip = local_ip_address::local_ip()
-        .map(|ip| ip.to_string())
-        .unwrap_or_else(|_| "127.0.0.1".to_string());
-        
-    let lan_url = format!("ws://{}:{}/ws?room={}", lan_ip, port, room_id);
-    
-    let _ = app.emit("session://gateway-ready", GatewayReadyPayload {
-        lan_url,
-        room_id: room_id.clone(),
-        port,
-    });
-
-    spawn_cloudflared(app, port, room_id);
-}
-
-fn spawn_cloudflared(app: AppHandle, port: u16, room_id: String) {
-    let url_arg = format!("http://localhost:{}", port);
-
-    let (mut tunnel_rx, tunnel_child) = match app.shell().sidecar("cloudflared")
-        .unwrap()
+    let (mut rx, child) = match sidecar
         .args(["tunnel", "--url", &url_arg, "--no-autoupdate"])
-        .spawn() 
+        .spawn()
     {
         Ok(res) => res,
-        Err(_) => return,
+        Err(e) => return emit_error(&app, format!("Failed to spawn cloudflared: {e}")),
     };
 
-    app.state::<AppState>().processes.lock().unwrap().tunnel = Some(tunnel_child);
+    app.state::<AppState>().processes.lock().unwrap().tunnel = Some(child);
 
     tauri::async_runtime::spawn(async move {
-        while let Some(event) = tunnel_rx.recv().await {
+        while let Some(event) = rx.recv().await {
             if let CommandEvent::Stderr(bytes) = event {
                 let line = String::from_utf8_lossy(&bytes);
-                
-                if let Some(https_url) = extract_tunnel_url(&line) {
-                    let wss_url = https_url.replacen("https://", "wss://", 1);
-                    let public_url = format!("{}/ws?room={}", wss_url, room_id);
-                    
-                    let _ = app.emit("session://tunnel-ready", TunnelReadyPayload {
-                        public_url,
-                        room_id,
-                    });
-                    break;
+                if let Some(raw_url) = extract_tunnel_url(&line) {
+                    let public_url =
+                        format!("{}/ws?room={}", raw_url.replacen("http", "ws", 1), room_id);
+                    store_public_url(&app, &public_url);
+                    let _ = app.emit(
+                        TUNNEL_READY,
+                        TunnelReadyPayload { public_url, room_id },
+                    );
+                    return;
                 }
             }
+        }
+
+        let is_host =
+            matches!(*app.state::<AppState>().role.lock().unwrap(), AppRole::Host { .. });
+        if is_host {
+            emit_error(&app, "cloudflared exited without producing a tunnel URL".into());
         }
     });
 }
 
 fn extract_tunnel_url(line: &str) -> Option<String> {
-    let start = line.find("https://")?;
+    let start = line.find("https://").or_else(|| line.find("http://"))?;
     let rest = &line[start..];
-    let end = rest.find(|c: char| c.is_whitespace() || c == '|' || c == '+' || c == '"').unwrap_or(rest.len());
-    
+    let end = rest
+        .find(|c: char| c.is_whitespace() || c == '|' || c == '+' || c == '"' || c == '\x1b')
+        .unwrap_or(rest.len());
     let url = rest[..end].trim().to_string();
-    if url.contains("trycloudflare.com") { Some(url) } else { None }
+    url.contains("trycloudflare.com").then_some(url)
 }
 
-fn generate_room_id() -> String {
-    format!("{:06x}", rand::thread_rng().gen::<u32>() & 0x00FF_FFFF)
+
+fn emit_error(app: &AppHandle, message: String) {
+    app.state::<AppState>().teardown_host();
+    let _ = app.emit(SESSION_ERROR, SessionErrorPayload { message });
+}
+
+fn store_public_url(app: &AppHandle, url: &str) {
+    let state = app.state::<AppState>();
+    let mut role = state.role.lock().unwrap();
+    if let AppRole::Host { public_url: ref mut stored, .. } = *role {
+        *stored = Some(url.to_string());
+    }
+}
+
+async fn get_lan_url(port: u16, room_id: &str) -> Option<String> {
+    let room_id = room_id.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        local_ip_address::local_ip()
+            .ok()
+            .map(|ip| format!("ws://{}:{}/ws?room={}", ip, port, room_id))
+    })
+    .await
+    .ok()
+    .flatten()
 }
