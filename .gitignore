@@ -24,3 +24,5 @@ dist-ssr
 *.sw?
 gateway/gateway
 **/target/
+
+tauri-app/src-tauri/binaries/cloudflared-*

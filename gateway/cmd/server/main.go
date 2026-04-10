@@ -1,25 +1,26 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"gateway/internal/hub"
 )
 
 func main() {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := net.Listen("tcp", ":0")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "listen: %v\n", err)
 		os.Exit(1)
 	}
 
 	port := ln.Addr().(*net.TCPAddr).Port
-
-	fmt.Printf("PORT=%d\n", port)
-	_ = os.Stdout.Sync()
 
 	h := hub.New()
 
@@ -29,8 +30,25 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	if err := http.Serve(ln, mux); err != nil {
+	srv := &http.Server{Handler: mux}
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- srv.Serve(ln)
+	}()
+
+	
+	fmt.Printf("PORT=%d\n", port)
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
+
+	select {
+	case err := <-serveErr:
 		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
 		os.Exit(1)
+	case <-sig:
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
 	}
 }
