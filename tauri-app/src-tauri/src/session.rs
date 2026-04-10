@@ -2,11 +2,9 @@ use crate::appstate::{AppRole, AppState};
 use crate::tunnel;
 use tauri::{AppHandle, Manager, State};
 
-
 pub const GATEWAY_READY: &str = "session://gateway-ready";
 pub const TUNNEL_READY: &str = "session://tunnel-ready";
 pub const SESSION_ERROR: &str = "session://session-error";
-
 
 #[derive(Clone, serde::Serialize)]
 pub struct GatewayReadyPayload {
@@ -26,7 +24,6 @@ pub struct SessionErrorPayload {
     pub message: String,
 }
 
-
 #[derive(serde::Serialize)]
 pub struct SessionInfo {
     pub status: String,
@@ -40,7 +37,6 @@ pub struct JoinInfo {
     pub server_url: String,
     pub room_id: String,
 }
-
 
 #[tauri::command]
 pub fn start_host_session(app: AppHandle) -> Result<(), String> {
@@ -79,7 +75,12 @@ pub fn get_session_info(state: State<'_, AppState>) -> SessionInfo {
             public_url: None,
             room_id: None,
         },
-        AppRole::Host { room_id, lan_url, public_url, .. } => SessionInfo {
+        AppRole::Host {
+            room_id,
+            lan_url,
+            public_url,
+            ..
+        } => SessionInfo {
             status: "host".into(),
             lan_url: lan_url.clone(),
             public_url: public_url.clone(),
@@ -108,5 +109,8 @@ pub fn parse_join_url(url: String) -> Result<JoinInfo, String> {
         .trim_end_matches('/')
         .to_string();
 
-    Ok(JoinInfo { server_url, room_id })
+    Ok(JoinInfo {
+        server_url,
+        room_id,
+    })
 }

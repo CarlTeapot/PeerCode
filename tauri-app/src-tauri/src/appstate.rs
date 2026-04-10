@@ -20,7 +20,7 @@ pub enum AppRole {
         lan_url: Option<String>,
         public_url: Option<String>,
     },
-    // add guest laterr 
+    // add guest laterr
 }
 
 pub struct HostProcesses {
