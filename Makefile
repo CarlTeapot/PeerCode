@@ -1,4 +1,4 @@
-.PHONY: help install install-linux-deps dev prod prod-build prod-run dev-gateway build test lint format clean \
+.PHONY: help install install-linux-deps dev prod prod-build prod-run dev-gateway build-gateway build test lint format clean \
         format-all lint-all test-all
 
 FRONTEND_BUILD_OUT := tauri-app/dist/index.html
@@ -6,6 +6,10 @@ FRONTEND_BUILD_INPUTS := $(shell git ls-files tauri-app/src) tauri-app/index.htm
 
 RUST_RELEASE_BIN := tauri-app/src-tauri/target/release/tauri-app
 RUST_RELEASE_INPUTS := $(shell git ls-files tauri-app/src-tauri/src crdt-core/src) tauri-app/src-tauri/Cargo.toml tauri-app/src-tauri/Cargo.lock crdt-core/Cargo.toml
+
+TARGET_TRIPLE := $(shell rustc -vV | sed -n 's|host: ||p')
+GATEWAY_BIN := tauri-app/src-tauri/binaries/peercode-gateway-$(TARGET_TRIPLE)
+GATEWAY_INPUTS := $(shell git ls-files gateway/)
 
 install-linux-deps:
 	sudo apt-get update
@@ -63,8 +67,13 @@ test-all: test-crdt test-tauri test-go
 
 # ------------- development ---------------
 
+$(GATEWAY_BIN): $(GATEWAY_INPUTS)
+	cd gateway && go build -o ../$(GATEWAY_BIN) ./cmd/server/
+
+build-gateway: $(GATEWAY_BIN)
+
 # run development servers for Tauri app
-dev:
+dev: $(GATEWAY_BIN)
 	cd tauri-app && npm run tauri:dev
 
 $(FRONTEND_BUILD_OUT): $(FRONTEND_BUILD_INPUTS)
@@ -73,7 +82,7 @@ $(FRONTEND_BUILD_OUT): $(FRONTEND_BUILD_INPUTS)
 $(RUST_RELEASE_BIN): $(RUST_RELEASE_INPUTS)
 	cd tauri-app && npm run tauri build -- --no-bundle
 
-prod-build: $(FRONTEND_BUILD_OUT) $(RUST_RELEASE_BIN)
+prod-build: $(GATEWAY_BIN) $(FRONTEND_BUILD_OUT) $(RUST_RELEASE_BIN)
 
 prod-run: $(RUST_RELEASE_BIN)
 	cd tauri-app/src-tauri && ./target/release/tauri-app

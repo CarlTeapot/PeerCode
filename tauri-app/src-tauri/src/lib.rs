@@ -1,5 +1,7 @@
 mod appstate;
 mod crdt_handler;
+mod session;
+mod tunnel;
 
 use std::thread;
 use std::time::Duration;
@@ -33,12 +35,25 @@ pub fn run() {
             app.manage(AppState::new(ClientId::new(random::<u64>())));
             #[cfg(debug_assertions)]
             spawn_linked_list_logger(app.handle().clone());
+
+            let _ = session::start_host_session(app.handle().clone());
+
             Ok(())
         })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                window.state::<AppState>().teardown_host();
+            }
+        })
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             crdt_handler::insert,
             crdt_handler::delete,
+            session::start_host_session,
+            session::stop_host_session,
+            session::parse_join_url,
+            session::get_session_info,
             #[cfg(debug_assertions)]
             crdt_handler::toggle_crdt_logging
         ])
