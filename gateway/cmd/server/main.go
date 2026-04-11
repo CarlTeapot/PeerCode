@@ -36,7 +36,7 @@ func main() {
 		serveErr <- srv.Serve(ln)
 	}()
 
-	fmt.Printf("PORT=%d\n", port)
+	fmt.Printf("{\"port\":%d}\n", port)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)

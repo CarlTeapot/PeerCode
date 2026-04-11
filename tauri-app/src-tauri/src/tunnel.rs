@@ -42,8 +42,8 @@ async fn run_gateway(app: &AppHandle, room_id: &str) -> Result<(), String> {
     while let Some(event) = rx.recv().await {
         if let CommandEvent::Stdout(bytes) = event {
             let line = String::from_utf8_lossy(&bytes);
-            if let Some(port_str) = line.trim().strip_prefix("PORT=") {
-                if let Ok(port) = port_str.parse::<u16>() {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(line.trim()) {
+                if let Some(port) = json.get("port").and_then(|v| v.as_u64()).map(|v| v as u16) {
                     on_gateway_ready(app, port, room_id).await;
                     return Ok(());
                 }
@@ -63,31 +63,19 @@ async fn run_gateway(app: &AppHandle, room_id: &str) -> Result<(), String> {
 }
 
 async fn on_gateway_ready(app: &AppHandle, port: u16, room_id: &str) {
-    let state = app.state::<AppState>();
+    let lan_url = get_lan_url(port, room_id).await;
 
     {
+        let state = app.state::<AppState>();
         let mut role = state.role.lock().unwrap();
         if !matches!(*role, AppRole::Starting) {
             return;
         }
         *role = AppRole::Host {
             room_id: room_id.to_string(),
-            lan_url: None,
+            lan_url: lan_url.clone(),
             public_url: None,
         };
-    }
-
-    let lan_url = get_lan_url(port, room_id).await;
-
-    {
-        let mut role = state.role.lock().unwrap();
-        match *role {
-            AppRole::Host {
-                lan_url: ref mut stored,
-                ..
-            } => *stored = lan_url.clone(),
-            _ => return,
-        }
     }
 
     let _ = app.emit(
@@ -125,8 +113,12 @@ fn run_cloudflared(app: AppHandle, port: u16, room_id: String) {
             if let CommandEvent::Stderr(bytes) = event {
                 let line = String::from_utf8_lossy(&bytes);
                 if let Some(raw_url) = extract_tunnel_url(&line) {
-                    let public_url =
-                        format!("{}/ws?room={}", raw_url.replacen("http", "ws", 1), room_id);
+                    let ws_url = if raw_url.starts_with("https://") {
+                        raw_url.replacen("https://", "wss://", 1)
+                    } else {
+                        raw_url.replacen("http://", "ws://", 1)
+                    };
+                    let public_url = format!("{}/ws?room={}", ws_url, room_id);
                     store_public_url(&app, &public_url);
                     let _ = app.emit(
                         TUNNEL_READY,

@@ -42,18 +42,7 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
-                let state = window.state::<AppState>();
-                let mut procs = state.processes.lock().unwrap();
-                if let Some(child) = procs.tunnel.take() {
-                    if let Err(e) = child.kill() {
-                        eprintln!("Failed to kill tunnel process: {e}");
-                    }
-                }
-                if let Some(child) = procs.gateway.take() {
-                    if let Err(e) = child.kill() {
-                        eprintln!("Failed to kill gateway process: {e}");
-                    }
-                }
+                window.state::<AppState>().teardown_host();
             }
         })
         .plugin(tauri_plugin_opener::init())

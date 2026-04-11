@@ -23,6 +23,16 @@ pub enum AppRole {
     // add guest laterr
 }
 
+impl AppRole {
+    pub fn status(&self) -> &'static str {
+        match self {
+            Self::Undecided => "idle",
+            Self::Starting => "starting",
+            Self::Host { .. } => "host",
+        }
+    }
+}
+
 pub struct HostProcesses {
     pub gateway: Option<CommandChild>,
     pub tunnel: Option<CommandChild>,

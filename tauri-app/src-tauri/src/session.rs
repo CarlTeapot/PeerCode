@@ -62,30 +62,20 @@ pub fn stop_host_session(state: State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 pub fn get_session_info(state: State<'_, AppState>) -> SessionInfo {
     let role = state.role.lock().unwrap();
-    match &*role {
-        AppRole::Undecided => SessionInfo {
-            status: "idle".into(),
-            lan_url: None,
-            public_url: None,
-            room_id: None,
-        },
-        AppRole::Starting => SessionInfo {
-            status: "starting".into(),
-            lan_url: None,
-            public_url: None,
-            room_id: None,
-        },
+    let (lan_url, public_url, room_id) = match &*role {
         AppRole::Host {
             room_id,
             lan_url,
             public_url,
             ..
-        } => SessionInfo {
-            status: "host".into(),
-            lan_url: lan_url.clone(),
-            public_url: public_url.clone(),
-            room_id: Some(room_id.clone()),
-        },
+        } => (lan_url.clone(), public_url.clone(), Some(room_id.clone())),
+        _ => (None, None, None),
+    };
+    SessionInfo {
+        status: role.status().into(),
+        lan_url,
+        public_url,
+        room_id,
     }
 }
 
