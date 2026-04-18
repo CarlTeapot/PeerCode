@@ -26,4 +26,7 @@ serde_json = "1"
 crdt-core = { path = "../../crdt-core" }
 rand = "0.8.5"
 local-ip-address = "0.6"
-
+tokio = { version = "1", features = ["time", "sync", "net", "macros", "rt"] }
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+futures-util = "0.3"
+toml = "0.8"

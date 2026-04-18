@@ -1,0 +1,2 @@
+[websocket]
+connect_timeout_ms = 5000

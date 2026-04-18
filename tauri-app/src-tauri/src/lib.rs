@@ -1,12 +1,16 @@
-mod appstate;
+mod config;
 mod crdt_handler;
 mod session;
+mod state;
 mod tunnel;
+mod ws_types;
 
 use std::thread;
 use std::time::Duration;
 
-use crate::appstate::AppState;
+use crate::config::AppConfig;
+use crate::state::appstate::AppState;
+use crate::state::ws_state::WsState;
 use crdt_core::types::ClientId;
 use rand::random;
 use std::sync::atomic::Ordering;
@@ -32,7 +36,12 @@ fn spawn_linked_list_logger(app_handle: tauri::AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            let app_config = AppConfig::load();
+
             app.manage(AppState::new(ClientId::new(random::<u64>())));
+            app.manage(WsState::new(app_config.websocket.connect_timeout()));
+            app.manage(app_config);
+
             #[cfg(debug_assertions)]
             spawn_linked_list_logger(app.handle().clone());
 

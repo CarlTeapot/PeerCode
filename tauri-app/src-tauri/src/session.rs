@@ -1,4 +1,4 @@
-use crate::appstate::{AppRole, AppState};
+use crate::state::appstate::{AppRole, AppState};
 use crate::tunnel;
 use tauri::{AppHandle, Manager, State};
 

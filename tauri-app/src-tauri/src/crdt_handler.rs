@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::appstate::AppState;
+use crate::state::appstate::AppState;
 use std::sync::atomic::Ordering;
 #[tauri::command]
 pub fn insert(state: State<AppState>, position: u64, content: String) -> Result<(), String> {
