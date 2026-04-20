@@ -5,3 +5,4 @@ pub mod structs;
 pub mod types;
 
 pub use document::Document;
+pub use error::DocumentError;
