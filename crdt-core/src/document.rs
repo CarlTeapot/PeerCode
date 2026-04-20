@@ -1,6 +1,14 @@
+use crate::error::DocumentError;
 use crate::store::{DeleteSet, StateVector, StructStore};
 use crate::structs::Block;
-use crate::types::{BlockId, ClientId, Clock, DocumentError};
+use crate::types::{BlockId, ClientId, Clock};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Readiness {
+    Ready,
+    Pending,
+    Duplicate,
+}
 
 #[derive(Debug)]
 pub struct Document {
@@ -32,7 +40,21 @@ impl Document {
         let mut text = String::new();
         let mut curr = self.head;
 
+        #[cfg(debug_assertions)]
+        let max_steps = self.store.total_blocks().saturating_add(1);
+        #[cfg(debug_assertions)]
+        let mut steps: usize = 0;
+
         while let Some(id) = curr {
+            #[cfg(debug_assertions)]
+            {
+                steps += 1;
+                debug_assert!(
+                    steps <= max_steps,
+                    "cycle detected in document linked list at block {id:?}"
+                );
+            }
+
             if let Some(block) = self.store.get(&id) {
                 if !block.is_deleted {
                     text.push_str(block.content());
@@ -49,8 +71,16 @@ impl Document {
     pub fn debug_linked_list(&self) -> String {
         let mut parts = Vec::new();
         let mut curr = self.head;
+        let max_steps = self.store.total_blocks().saturating_add(1);
+        let mut steps: usize = 0;
 
         while let Some(id) = curr {
+            steps += 1;
+            debug_assert!(
+                steps <= max_steps,
+                "cycle detected in document linked list at block {id:?}"
+            );
+
             if let Some(block) = self.store.get(&id) {
                 let content = if block.content().is_empty() {
                     "<empty>".to_string()
@@ -233,9 +263,13 @@ impl Document {
     }
 
     pub fn remote_insert(&mut self, block: Block) -> Result<(), DocumentError> {
-        if !self.is_ready_to_integrate(&block) {
-            self.pending_blocks.push(block);
-            return Ok(());
+        match self.classify_block(&block) {
+            Readiness::Duplicate => return Ok(()),
+            Readiness::Pending => {
+                self.pending_blocks.push(block);
+                return Ok(());
+            }
+            Readiness::Ready => {}
         }
 
         let client = block.id.client;
@@ -249,21 +283,27 @@ impl Document {
         Ok(())
     }
 
-    fn is_ready_to_integrate(&self, block: &Block) -> bool {
-        if !self.state_vector.can_integrate(&block.id) {
-            return false;
+    fn classify_block(&self, block: &Block) -> Readiness {
+        let seen = self.state_vector.get(&block.id.client);
+        let clock = block.id.clock.value;
+
+        if seen > clock {
+            return Readiness::Duplicate;
+        }
+        if seen < clock {
+            return Readiness::Pending;
         }
         if let Some(ol) = block.origin_left
             && !self.store.contains_key(&ol)
         {
-            return false;
+            return Readiness::Pending;
         }
         if let Some(or) = block.origin_right
             && !self.store.contains_key(&or)
         {
-            return false;
+            return Readiness::Pending;
         }
-        true
+        Readiness::Ready
     }
 
     fn ensure_block_split_at(&mut self, id: BlockId) -> Result<(), DocumentError> {
@@ -299,15 +339,21 @@ impl Document {
             let candidates: Vec<Block> = self.pending_blocks.drain(..).collect();
             let mut still_pending_blocks: Vec<Block> = Vec::new();
             for block in candidates {
-                if self.is_ready_to_integrate(&block) {
-                    let client = block.id.client;
-                    let end_clock = block.id.clock.value + block.len;
-                    self.pre_split_for_block(&block)?;
-                    self.integrate(block)?;
-                    self.state_vector.update(client, end_clock);
-                    progress = true;
-                } else {
-                    still_pending_blocks.push(block);
+                match self.classify_block(&block) {
+                    Readiness::Ready => {
+                        let client = block.id.client;
+                        let end_clock = block.id.clock.value + block.len;
+                        self.pre_split_for_block(&block)?;
+                        self.integrate(block)?;
+                        self.state_vector.update(client, end_clock);
+                        progress = true;
+                    }
+                    Readiness::Duplicate => {
+                        progress = true;
+                    }
+                    Readiness::Pending => {
+                        still_pending_blocks.push(block);
+                    }
                 }
             }
             self.pending_blocks = still_pending_blocks;
@@ -384,7 +430,7 @@ impl Document {
         let (first_id, start_offset, _) = self.get_block_and_offset_by_position(position);
 
         let Some(mut current_id) = first_id else {
-            return Ok(());
+            return Err(DocumentError::OutOfBounds(position));
         };
 
         if start_offset > 0
@@ -433,6 +479,10 @@ impl Document {
                 Some(next) => current_id = next,
                 None => break,
             }
+        }
+
+        if remaining > 0 {
+            return Err(DocumentError::OutOfBounds(position + length - remaining));
         }
 
         Ok(())

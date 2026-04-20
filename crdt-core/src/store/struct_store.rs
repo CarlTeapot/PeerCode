@@ -18,6 +18,12 @@ impl StructStore {
         self.get(id).is_some()
     }
 
+    /// Total number of `Block` structs across all clients. Used by callers
+    /// that need a bound on linked-list traversals (cycle guards).
+    pub fn total_blocks(&self) -> usize {
+        self.blocks.values().map(|v| v.len()).sum()
+    }
+
     pub fn insert(&mut self, block: Block) {
         let list = self.blocks.entry(block.id.client).or_default();
         let pos = list.partition_point(|b| b.id.clock.value < block.id.clock.value);

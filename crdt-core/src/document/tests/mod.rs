@@ -1,6 +1,7 @@
 use super::Document;
 use crate::structs::Block;
-use crate::types::{BlockId, ClientId, Clock, DocumentError};
+use crate::error::DocumentError;
+use crate::types::{BlockId, ClientId, Clock};
 
 fn block_id(client: u64, clock: u64) -> BlockId {
     BlockId::new(ClientId::new(client), Clock::new(clock))
@@ -501,6 +502,84 @@ fn remote_block_referencing_unreceived_cross_client_origin_is_buffered() {
     doc.remote_insert(c1_block).unwrap();
 
     assert_eq!(doc.get_text(), "AB");
+}
+
+#[test]
+fn remote_insert_dedupes_resent_block() {
+    let mut doc = Document::new(ClientId::new(99));
+    let c1 = ClientId::new(1);
+    let a_id = BlockId::new(c1, Clock::new(0));
+    let block_a = Block::new(a_id, None, None, "A".to_string());
+
+    doc.remote_insert(block_a.clone()).unwrap();
+    assert_eq!(doc.get_text(), "A");
+
+    doc.remote_insert(block_a.clone()).unwrap();
+    doc.remote_insert(block_a).unwrap();
+
+    assert_eq!(doc.get_text(), "A", "duplicate retransmits must not double-insert");
+    assert_eq!(doc.state_vector.get(&c1), 1);
+}
+
+#[test]
+fn drain_drops_pending_duplicate_when_gap_fills() {
+    let mut doc = Document::new(ClientId::new(99));
+    let c1 = ClientId::new(1);
+    let id0 = BlockId::new(c1, Clock::new(0));
+    let id1 = BlockId::new(c1, Clock::new(1));
+
+    let block_b = Block::new(id1, Some(id0), None, "B".to_string());
+    doc.remote_insert(block_b.clone()).unwrap();
+    doc.remote_insert(block_b).unwrap();
+    assert_eq!(doc.get_text(), "");
+
+    let block_a = Block::new(id0, None, None, "A".to_string());
+    doc.remote_insert(block_a).unwrap();
+
+    assert_eq!(
+        doc.get_text(),
+        "AB",
+        "pending duplicate must be dropped during drain instead of re-integrated"
+    );
+    assert_eq!(doc.state_vector.get(&c1), 2);
+}
+
+#[test]
+fn delete_past_end_of_empty_document_returns_out_of_bounds() {
+    let mut doc = Document::new(ClientId::new(1));
+    let result = doc.delete(100, 5);
+    assert_eq!(result, Err(DocumentError::OutOfBounds(100)));
+}
+
+#[test]
+fn delete_past_end_of_nonempty_document_returns_out_of_bounds() {
+    let mut doc = Document::new(ClientId::new(1));
+    doc.local_insert(0, "abc").unwrap();
+    let result = doc.delete(10, 1);
+    assert_eq!(result, Err(DocumentError::OutOfBounds(10)));
+}
+
+#[test]
+fn delete_over_length_returns_out_of_bounds_at_first_unreachable_position() {
+    let mut doc = Document::new(ClientId::new(1));
+    doc.local_insert(0, "abcde").unwrap();
+
+    let result = doc.delete(0, 999);
+
+    assert_eq!(
+        result,
+        Err(DocumentError::OutOfBounds(5)),
+        "over-delete must error at the position where the doc ran out"
+    );
+}
+
+#[test]
+#[should_panic(expected = "cycle detected")]
+fn get_text_debug_asserts_on_cycle() {
+    let (mut doc, id) = doc_with_single_block("hello");
+    doc.store.get_mut(&id).unwrap().set_right(Some(id));
+
+    let _ = doc.get_text();
 }
 
 #[test]
