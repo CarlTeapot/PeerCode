@@ -18,8 +18,6 @@ impl StructStore {
         self.get(id).is_some()
     }
 
-    /// Total number of `Block` structs across all clients. Used by callers
-    /// that need a bound on linked-list traversals (cycle guards).
     pub fn total_blocks(&self) -> usize {
         self.blocks.values().map(|v| v.len()).sum()
     }
@@ -83,13 +81,4 @@ impl StructStore {
             None
         }
     }
-
-    // Empty for now , will implement later when we have the basic structure in place
-    //pub fn get_missing_blocks(&self, remote_sv: &StateVector) -> Vec<&Block> {    }
-
-    //pub fn split_block_at(&mut self, client: ClientId, split_clock: u64) -> Option<BlockId> {}
-
-    //pub fn try_squash_tail(&mut self, client: ClientId) {}
-
-    //pub fn undelete(&mut self, id: &BlockId) -> bool {}
 }

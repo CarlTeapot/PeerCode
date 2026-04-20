@@ -1,6 +1,6 @@
 use super::Document;
-use crate::structs::Block;
 use crate::error::DocumentError;
+use crate::structs::Block;
 use crate::types::{BlockId, ClientId, Clock};
 
 fn block_id(client: u64, clock: u64) -> BlockId {
@@ -301,16 +301,23 @@ fn yata_descendant_block_not_split_by_concurrent_insert() {
 
     let mut doc = Document::new(ClientId::new(99));
 
-    doc.remote_insert(Block::new(a_id, None, None, "A".to_string())).unwrap();
-    doc.remote_insert(Block::new(b_id, Some(a_id), None, "B".to_string())).unwrap();
-    doc.remote_insert(Block::new(c_id, Some(b_id), None, "C".to_string())).unwrap();
+    doc.remote_insert(Block::new(a_id, None, None, "A".to_string()))
+        .unwrap();
+    doc.remote_insert(Block::new(b_id, Some(a_id), None, "B".to_string()))
+        .unwrap();
+    doc.remote_insert(Block::new(c_id, Some(b_id), None, "C".to_string()))
+        .unwrap();
 
     assert_eq!(doc.get_text(), "ABC");
 
-    doc.remote_insert(Block::new(x_id, Some(a_id), None, "X".to_string())).unwrap();
+    doc.remote_insert(Block::new(x_id, Some(a_id), None, "X".to_string()))
+        .unwrap();
 
     let text = doc.get_text();
-    assert_ne!(text, "ABXC", "X must not split B's sequence (YATA interleaving bug)");
+    assert_ne!(
+        text, "ABXC",
+        "X must not split B's sequence (YATA interleaving bug)"
+    );
     assert_eq!(text, "ABCX");
 }
 
@@ -332,7 +339,8 @@ fn concurrent_inserts_at_end_converge_regardless_of_arrival_order() {
     doc_b.remote_insert(block_a.clone()).unwrap();
 
     assert_eq!(
-        doc_a.get_text(), doc_b.get_text(),
+        doc_a.get_text(),
+        doc_b.get_text(),
         "documents must converge regardless of arrival order"
     );
     assert_eq!(doc_a.get_text(), "AB");
@@ -374,8 +382,14 @@ fn struct_store_get_finds_block_inserted_out_of_clock_order() {
     store.insert(Block::new(id2, None, None, "B".to_string()));
     store.insert(Block::new(id0, None, None, "A".to_string()));
 
-    assert!(store.get(&id0).is_some(), "block at clock=0 must be findable");
-    assert!(store.get(&id2).is_some(), "block at clock=2 must be findable");
+    assert!(
+        store.get(&id0).is_some(),
+        "block at clock=0 must be findable"
+    );
+    assert!(
+        store.get(&id2).is_some(),
+        "block at clock=2 must be findable"
+    );
 }
 
 #[test]
@@ -390,7 +404,11 @@ fn out_of_order_remote_blocks_are_buffered_then_applied() {
         "B".to_string(),
     );
     doc.remote_insert(block_1).unwrap();
-    assert_eq!(doc.get_text(), "", "out-of-order block must be buffered, not applied");
+    assert_eq!(
+        doc.get_text(),
+        "",
+        "out-of-order block must be buffered, not applied"
+    );
 
     let block_0 = Block::new(
         BlockId::new(client2, Clock::new(0)),
@@ -400,7 +418,11 @@ fn out_of_order_remote_blocks_are_buffered_then_applied() {
     );
     doc.remote_insert(block_0).unwrap();
 
-    assert_eq!(doc.get_text(), "AB", "after gap is filled both blocks must appear");
+    assert_eq!(
+        doc.get_text(),
+        "AB",
+        "after gap is filled both blocks must appear"
+    );
 }
 
 #[test]
@@ -485,12 +507,7 @@ fn remote_block_referencing_unreceived_cross_client_origin_is_buffered() {
     let c1_block_id = BlockId::new(c1, Clock::new(0));
     let c2_block_id = BlockId::new(c2, Clock::new(0));
 
-    let c2_block = Block::new(
-        c2_block_id,
-        Some(c1_block_id),
-        None,
-        "B".to_string(),
-    );
+    let c2_block = Block::new(c2_block_id, Some(c1_block_id), None, "B".to_string());
     doc.remote_insert(c2_block).unwrap();
     assert_eq!(
         doc.get_text(),
@@ -517,7 +534,11 @@ fn remote_insert_dedupes_resent_block() {
     doc.remote_insert(block_a.clone()).unwrap();
     doc.remote_insert(block_a).unwrap();
 
-    assert_eq!(doc.get_text(), "A", "duplicate retransmits must not double-insert");
+    assert_eq!(
+        doc.get_text(),
+        "A",
+        "duplicate retransmits must not double-insert"
+    );
     assert_eq!(doc.state_vector.get(&c1), 1);
 }
 
