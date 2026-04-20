@@ -1,8 +1,9 @@
-use crate::appstate::{AppRole, AppState};
 use crate::session::{
     GatewayReadyPayload, SessionErrorPayload, TunnelReadyPayload, GATEWAY_READY, SESSION_ERROR,
     TUNNEL_READY,
 };
+use crate::state::appstate::{AppRole, AppState};
+use crate::state::ws_state::WsState;
 use rand::Rng;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::process::CommandEvent;
@@ -31,6 +32,7 @@ async fn run_gateway(app: &AppHandle, room_id: &str) -> Result<(), String> {
     {
         let state = app.state::<AppState>();
         let role = state.role.lock().unwrap();
+        println!("{}", role.status());
         if !matches!(*role, AppRole::Starting) {
             let _ = child.kill();
             return Ok(());
@@ -45,6 +47,8 @@ async fn run_gateway(app: &AppHandle, room_id: &str) -> Result<(), String> {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(line.trim()) {
                 if let Some(port) = json.get("port").and_then(|v| v.as_u64()).map(|v| v as u16) {
                     on_gateway_ready(app, port, room_id).await;
+                    println!("Gateway ready");
+                    tauri::async_runtime::spawn(pipe_gateway_logs(rx));
                     return Ok(());
                 }
             }
@@ -124,9 +128,30 @@ fn run_cloudflared(app: AppHandle, port: u16, room_id: String) {
                         TUNNEL_READY,
                         TunnelReadyPayload {
                             public_url,
-                            room_id,
+                            room_id: room_id.clone(),
                         },
                     );
+
+                    let ws_url = format!("ws://127.0.0.1:{port}/ws?room={room_id}");
+                    let ws = app.state::<WsState>();
+                    match ws.connect(&ws_url, room_id.clone()).await {
+                        Err(e) => {
+                            eprintln!("[ws] local connection failed (session still running): {e}")
+                        }
+                        Ok(()) => {
+                            let test_msg = format!(
+                                r#"{{"type":"ping","room":"{room_id}","client_id":"tauri-host"}}"#
+                            );
+                            if let Err(e) = ws
+                                .send(tokio_tungstenite::tungstenite::Message::Text(
+                                    test_msg.into(),
+                                ))
+                                .await
+                            {
+                                eprintln!("[ws] test send failed: {e}");
+                            }
+                        }
+                    }
                     return;
                 }
             }
@@ -169,6 +194,16 @@ fn store_public_url(app: &AppHandle, url: &str) {
     } = *role
     {
         *stored = Some(url.to_string());
+    }
+}
+
+async fn pipe_gateway_logs(mut rx: tokio::sync::mpsc::Receiver<CommandEvent>) {
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(b) => print!("[gateway] {}", String::from_utf8_lossy(&b)),
+            CommandEvent::Stderr(b) => eprint!("[gateway] {}", String::from_utf8_lossy(&b)),
+            _ => {}
+        }
     }
 }
 

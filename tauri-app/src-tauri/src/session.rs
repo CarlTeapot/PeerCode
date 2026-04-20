@@ -1,4 +1,5 @@
-use crate::appstate::{AppRole, AppState};
+use crate::state::appstate::{AppRole, AppState};
+use crate::state::ws_state::WsState;
 use crate::tunnel;
 use tauri::{AppHandle, Manager, State};
 
@@ -57,6 +58,11 @@ pub fn start_host_session(app: AppHandle) -> Result<(), String> {
 pub fn stop_host_session(state: State<'_, AppState>) -> Result<(), String> {
     state.teardown_host();
     Ok(())
+}
+
+#[tauri::command]
+pub async fn disconnect_websocket(ws: State<'_, WsState>) -> Result<(), String> {
+    ws.disconnect().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
