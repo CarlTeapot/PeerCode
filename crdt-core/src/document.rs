@@ -10,6 +10,8 @@ pub struct Document {
     pub delete_set: DeleteSet,
     pub seen_delete_set: DeleteSet,
     pub head: Option<BlockId>,
+    pending_blocks: Vec<Block>,
+    pending_delete_sets: Vec<DeleteSet>,
 }
 
 impl Document {
@@ -21,6 +23,8 @@ impl Document {
             delete_set: DeleteSet::new(),
             seen_delete_set: DeleteSet::new(),
             head: None,
+            pending_blocks: Vec::new(),
+            pending_delete_sets: Vec::new(),
         }
     }
 
@@ -75,6 +79,8 @@ impl Document {
     }
 
     fn find_insert_position(&self, block: &Block) -> Result<Option<BlockId>, DocumentError> {
+        use std::collections::HashSet;
+
         let mut left = block.origin_left;
         let right = block.origin_right;
 
@@ -87,6 +93,8 @@ impl Document {
             self.head
         };
 
+        let mut seen: HashSet<BlockId> = HashSet::new();
+
         while let Some(curr_id) = scanning_id {
             if Some(curr_id) == right {
                 break;
@@ -98,12 +106,22 @@ impl Document {
                 .ok_or(DocumentError::BlockNotFound(curr_id))?;
 
             let o_l = curr_block.origin_left;
-            let o_r = curr_block.origin_right;
 
-            if o_l != block.origin_left {
+            seen.insert(curr_id);
+
+            let ol_is_left_of_ours = match (o_l, block.origin_left) {
+                (None, Some(_)) => true,
+                (Some(x), _) if Some(x) != block.origin_left && !seen.contains(&x) => true,
+                _ => false,
+            };
+
+            if ol_is_left_of_ours {
                 break;
             }
-            if o_r == block.origin_right && block.id.client.value < curr_block.id.client.value {
+
+            if o_l == block.origin_left
+                && block.id.client.value < curr_block.id.client.value
+            {
                 break;
             }
 
@@ -184,12 +202,13 @@ impl Document {
                     .store
                     .get(&block_id)
                     .ok_or(DocumentError::BlockNotFound(block_id))?;
-                Ok((Some(block_id), left_ref.right()))
+                let origin_left_id =
+                    BlockId::new(block_id.client, block_id.clock.advance(offset - 1));
+                Ok((Some(origin_left_id), left_ref.right()))
             }
+        } else if offset > 0 {
+            Err(DocumentError::OutOfBounds(position))
         } else {
-            if offset > 0 && self.head.is_some() {
-                return Err(DocumentError::OutOfBounds(position));
-            }
             Ok((tail_id, None))
         }
     }
@@ -214,12 +233,147 @@ impl Document {
     }
 
     pub fn remote_insert(&mut self, block: Block) -> Result<(), DocumentError> {
+        if !self.is_ready_to_integrate(&block) {
+            self.pending_blocks.push(block);
+            return Ok(());
+        }
+
         let client = block.id.client;
         let end_clock = block.id.clock.value + block.len;
 
+        self.pre_split_for_block(&block)?;
         self.integrate(block)?;
         self.state_vector.update(client, end_clock);
+
+        self.drain_pending()?;
         Ok(())
+    }
+
+    fn is_ready_to_integrate(&self, block: &Block) -> bool {
+        if !self.state_vector.can_integrate(&block.id) {
+            return false;
+        }
+        if let Some(ol) = block.origin_left
+            && !self.store.contains_key(&ol)
+        {
+            return false;
+        }
+        if let Some(or) = block.origin_right
+            && !self.store.contains_key(&or)
+        {
+            return false;
+        }
+        true
+    }
+
+    fn ensure_block_split_at(&mut self, id: BlockId) -> Result<(), DocumentError> {
+        let block = match self.store.get(&id) {
+            Some(b) => b,
+            None => return Ok(()),
+        };
+        let block_start = block.id.clock.value;
+        if block_start == id.clock.value {
+            return Ok(());
+        }
+        let offset = id.clock.value - block_start;
+        let block_id = block.id;
+        self.split_block(block_id, offset)?;
+        Ok(())
+    }
+
+    fn pre_split_for_block(&mut self, block: &Block) -> Result<(), DocumentError> {
+        if let Some(ol) = block.origin_left {
+            let split_point = BlockId::new(ol.client, ol.clock.advance(1));
+            self.ensure_block_split_at(split_point)?;
+        }
+        if let Some(or_id) = block.origin_right {
+            self.ensure_block_split_at(or_id)?;
+        }
+        Ok(())
+    }
+
+    fn drain_pending(&mut self) -> Result<(), DocumentError> {
+        loop {
+            let mut progress = false;
+
+            let candidates: Vec<Block> = self.pending_blocks.drain(..).collect();
+            let mut still_pending_blocks: Vec<Block> = Vec::new();
+            for block in candidates {
+                if self.is_ready_to_integrate(&block) {
+                    let client = block.id.client;
+                    let end_clock = block.id.clock.value + block.len;
+                    self.pre_split_for_block(&block)?;
+                    self.integrate(block)?;
+                    self.state_vector.update(client, end_clock);
+                    progress = true;
+                } else {
+                    still_pending_blocks.push(block);
+                }
+            }
+            self.pending_blocks = still_pending_blocks;
+
+            let candidate_ds: Vec<DeleteSet> = self.pending_delete_sets.drain(..).collect();
+            let mut still_pending_ds: Vec<DeleteSet> = Vec::new();
+            for ds in candidate_ds {
+                let unapplied = self.try_apply_delete_set(&ds)?;
+                if unapplied.is_empty() {
+                    progress = true;
+                } else {
+                    still_pending_ds.push(unapplied);
+                }
+            }
+            self.pending_delete_sets = still_pending_ds;
+
+            if !progress {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    fn try_apply_delete_set(&mut self, remote: &DeleteSet) -> Result<DeleteSet, DocumentError> {
+        let mut unapplied = DeleteSet::new();
+
+        for (client, range) in remote.iter() {
+            let mut current_clock = range.start;
+            let end_clock = range.end();
+
+            while current_clock < end_clock {
+                let id = BlockId::new(*client, Clock::new(current_clock));
+
+                let (block_start, block_len, block_id) = match self.store.get(&id) {
+                    Some(b) => (b.id.clock.value, b.len, b.id),
+                    None => {
+                        unapplied.add(
+                            BlockId::new(*client, Clock::new(current_clock)),
+                            end_clock - current_clock,
+                        );
+                        break;
+                    }
+                };
+
+                let offset = current_clock - block_start;
+                if offset > 0 {
+                    self.split_block(block_id, offset)?;
+                    continue;
+                }
+
+                let remaining_delete = end_clock - current_clock;
+                if block_len > remaining_delete {
+                    self.split_block(block_id, remaining_delete)?;
+                }
+
+                let actual_len = self
+                    .store
+                    .mark_deleted(&block_id)
+                    .ok_or(DocumentError::BlockNotFound(block_id))?
+                    .len;
+
+                current_clock += actual_len;
+            }
+        }
+
+        Ok(unapplied)
     }
 
     pub fn delete(&mut self, position: u64, length: u64) -> Result<(), DocumentError> {
@@ -285,44 +439,11 @@ impl Document {
     }
 
     pub fn apply_delete_set(&mut self, remote: &DeleteSet) -> Result<(), DocumentError> {
-        for (client, range) in remote.iter() {
-            let mut current_clock = range.start;
-            let end_clock = range.end();
-
-            while current_clock < end_clock {
-                let id = BlockId::new(*client, Clock::new(current_clock));
-
-                let (block_start, block_len, block_id) = match self.store.get(&id) {
-                    Some(b) => (b.id.clock.value, b.len, b.id),
-                    None => {
-                        current_clock += 1;
-                        continue;
-                    }
-                };
-
-                let offset = current_clock - block_start;
-                if offset > 0 {
-                    self.split_block(block_id, offset)?;
-                    continue;
-                }
-
-                let remaining_delete = end_clock - current_clock;
-                if block_len > remaining_delete {
-                    self.split_block(block_id, remaining_delete)?;
-                }
-
-                let actual_len = self
-                    .store
-                    .mark_deleted(&block_id)
-                    .ok_or(DocumentError::BlockNotFound(block_id))?
-                    .len;
-
-                current_clock += actual_len;
-            }
+        let unapplied = self.try_apply_delete_set(remote)?;
+        if !unapplied.is_empty() {
+            self.pending_delete_sets.push(unapplied);
         }
-
         self.seen_delete_set.merge(remote);
-
         Ok(())
     }
 
@@ -334,10 +455,10 @@ impl Document {
             while current_clock < end_clock {
                 let id = BlockId::new(*client, Clock::new(current_clock));
 
-                let next_clock = match self.store.get(&id) {
-                    Some(b) => b.id.clock.value + b.len,
-                    None => current_clock + 1,
+                let Some(block) = self.store.get(&id) else {
+                    break;
                 };
+                let next_clock = block.id.clock.value + block.len;
 
                 self.store.erase_content(&id);
                 current_clock = next_clock;
@@ -367,23 +488,24 @@ impl Document {
                 client: block.id.client,
                 clock: block.id.clock.advance(offset),
             };
+            let old_right_block_id = block.right();
             let mut new_block: Block = Block::new(
                 new_block_id,
                 Some(block.id),
-                block.right(),
+                block.origin_right,
                 new_block_content,
             );
 
             new_block.is_deleted = block.is_deleted;
+            new_block.set_right(old_right_block_id);
 
-            let old_right_block_id = block.right();
             block.set_right(Some(new_block_id));
 
             (old_right_block_id, new_block)
         };
 
         let new_block_id = new_block.id;
-        self.store.insert_after_block(&block_id, new_block);
+        self.store.insert(new_block);
 
         if let Some(right_id) = right_block_id {
             self.store

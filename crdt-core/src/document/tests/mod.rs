@@ -1,6 +1,6 @@
 use super::Document;
 use crate::structs::Block;
-use crate::types::{BlockId, ClientId, Clock};
+use crate::types::{BlockId, ClientId, Clock, DocumentError};
 
 fn block_id(client: u64, clock: u64) -> BlockId {
     BlockId::new(ClientId::new(client), Clock::new(clock))
@@ -256,4 +256,272 @@ fn test_remote_insert_conflict_resolution() {
 
     assert_eq!(final_text_a, final_text_b, "Documents failed to converge");
     assert_eq!(final_text_a, "AXY");
+}
+
+#[test]
+fn insert_out_of_bounds_on_empty_document_returns_error() {
+    let mut doc = Document::new(ClientId::new(1));
+    let result = doc.local_insert(5, "X");
+    assert_eq!(result, Err(DocumentError::OutOfBounds(5)));
+}
+
+#[test]
+fn split_block_right_half_inherits_origin_right_not_current_right() {
+    let client1 = ClientId::new(1);
+    let client3 = ClientId::new(3);
+    let a_id = BlockId::new(client1, Clock::new(0));
+    let c_id = BlockId::new(client3, Clock::new(0));
+
+    let mut doc = Document::new(client1);
+
+    let mut a = Block::new(a_id, None, None, "ab".to_string());
+    let mut c = Block::new(c_id, Some(a_id), None, "cd".to_string());
+    c.set_left(Some(a_id));
+    a.set_right(Some(c_id));
+
+    doc.head = Some(a_id);
+    doc.store.insert(a);
+    doc.store.insert(c);
+
+    doc.split_block(a_id, 1).unwrap();
+
+    let middle_id = doc.store.get(&a_id).unwrap().right().unwrap();
+    let middle = doc.store.get(&middle_id).unwrap();
+
+    assert_eq!(middle.origin_right, None);
+}
+
+#[test]
+fn yata_descendant_block_not_split_by_concurrent_insert() {
+    let a_id = BlockId::new(ClientId::new(1), Clock::new(0));
+    let b_id = BlockId::new(ClientId::new(2), Clock::new(0));
+    let c_id = BlockId::new(ClientId::new(2), Clock::new(1));
+    let x_id = BlockId::new(ClientId::new(3), Clock::new(0));
+
+    let mut doc = Document::new(ClientId::new(99));
+
+    doc.remote_insert(Block::new(a_id, None, None, "A".to_string())).unwrap();
+    doc.remote_insert(Block::new(b_id, Some(a_id), None, "B".to_string())).unwrap();
+    doc.remote_insert(Block::new(c_id, Some(b_id), None, "C".to_string())).unwrap();
+
+    assert_eq!(doc.get_text(), "ABC");
+
+    doc.remote_insert(Block::new(x_id, Some(a_id), None, "X".to_string())).unwrap();
+
+    let text = doc.get_text();
+    assert_ne!(text, "ABXC", "X must not split B's sequence (YATA interleaving bug)");
+    assert_eq!(text, "ABCX");
+}
+
+#[test]
+fn concurrent_inserts_at_end_converge_regardless_of_arrival_order() {
+    let mut doc_a = Document::new(ClientId::new(1));
+    let mut doc_b = Document::new(ClientId::new(2));
+
+    doc_a.local_insert(0, "A").unwrap();
+    doc_b.local_insert(0, "B").unwrap();
+
+    let id_a = BlockId::new(ClientId::new(1), Clock::new(0));
+    let id_b = BlockId::new(ClientId::new(2), Clock::new(0));
+
+    let block_a = doc_a.store.get(&id_a).unwrap().clone();
+    let block_b = doc_b.store.get(&id_b).unwrap().clone();
+
+    doc_a.remote_insert(block_b.clone()).unwrap();
+    doc_b.remote_insert(block_a.clone()).unwrap();
+
+    assert_eq!(
+        doc_a.get_text(), doc_b.get_text(),
+        "documents must converge regardless of arrival order"
+    );
+    assert_eq!(doc_a.get_text(), "AB");
+}
+
+#[test]
+fn local_insert_mid_block_produces_correct_origin_left_clock() {
+    let mut doc = Document::new(ClientId::new(1));
+    doc.local_insert(0, "Hello").unwrap();
+
+    doc.local_insert(2, "X").unwrap();
+
+    let x_id = BlockId::new(ClientId::new(1), Clock::new(5));
+    let x_block = doc.store.get(&x_id).unwrap();
+
+    assert_eq!(
+        x_block.origin_left,
+        Some(BlockId::new(ClientId::new(1), Clock::new(1))),
+        "origin_left must point to 'e' (clock 1), not the block-start clock"
+    );
+    assert_eq!(
+        x_block.origin_right,
+        Some(BlockId::new(ClientId::new(1), Clock::new(2))),
+        "origin_right must point to 'l' (clock 2)"
+    );
+
+    assert_eq!(doc.get_text(), "HeXllo");
+}
+
+#[test]
+fn struct_store_get_finds_block_inserted_out_of_clock_order() {
+    use crate::store::StructStore;
+
+    let client = ClientId::new(1);
+    let id0 = BlockId::new(client, Clock::new(0));
+    let id2 = BlockId::new(client, Clock::new(2));
+
+    let mut store = StructStore::new();
+    store.insert(Block::new(id2, None, None, "B".to_string()));
+    store.insert(Block::new(id0, None, None, "A".to_string()));
+
+    assert!(store.get(&id0).is_some(), "block at clock=0 must be findable");
+    assert!(store.get(&id2).is_some(), "block at clock=2 must be findable");
+}
+
+#[test]
+fn out_of_order_remote_blocks_are_buffered_then_applied() {
+    let mut doc = Document::new(ClientId::new(1));
+    let client2 = ClientId::new(2);
+
+    let block_1 = Block::new(
+        BlockId::new(client2, Clock::new(1)),
+        Some(BlockId::new(client2, Clock::new(0))),
+        None,
+        "B".to_string(),
+    );
+    doc.remote_insert(block_1).unwrap();
+    assert_eq!(doc.get_text(), "", "out-of-order block must be buffered, not applied");
+
+    let block_0 = Block::new(
+        BlockId::new(client2, Clock::new(0)),
+        None,
+        None,
+        "A".to_string(),
+    );
+    doc.remote_insert(block_0).unwrap();
+
+    assert_eq!(doc.get_text(), "AB", "after gap is filled both blocks must appear");
+}
+
+#[test]
+fn delete_set_for_unreceived_block_is_applied_after_block_arrives() {
+    use crate::store::DeleteSet;
+
+    let mut doc = Document::new(ClientId::new(1));
+    let client2 = ClientId::new(2);
+    let target_id = BlockId::new(client2, Clock::new(0));
+
+    let mut ds = DeleteSet::new();
+    ds.add(target_id, 1);
+    doc.apply_delete_set(&ds).unwrap();
+
+    let block = Block::new(target_id, None, None, "A".to_string());
+    doc.remote_insert(block).unwrap();
+
+    assert_eq!(doc.get_text(), "");
+    assert!(
+        doc.store.get(&target_id).unwrap().is_deleted,
+        "block must be marked deleted after pending delete set is drained"
+    );
+}
+
+#[test]
+fn remote_mid_block_insert_placed_at_correct_position() {
+    let mut doc_a = Document::new(ClientId::new(1));
+    let mut doc_b = Document::new(ClientId::new(2));
+
+    doc_a.local_insert(0, "Hello").unwrap();
+    let hello_id = doc_a.head.unwrap();
+    let hello_block = doc_a.store.get(&hello_id).unwrap().clone();
+    doc_b.remote_insert(hello_block).unwrap();
+
+    assert_eq!(doc_b.get_text(), "Hello");
+
+    doc_a.local_insert(2, "X").unwrap();
+    assert_eq!(doc_a.get_text(), "HeXllo");
+
+    let x_id = BlockId::new(ClientId::new(1), Clock::new(5));
+    let x_block = doc_a.store.get(&x_id).unwrap().clone();
+
+    doc_b.remote_insert(x_block).unwrap();
+
+    assert_eq!(doc_b.get_text(), "HeXllo");
+}
+
+#[test]
+fn two_docs_converge_after_concurrent_mid_block_inserts() {
+    let mut doc_a = Document::new(ClientId::new(1));
+    let mut doc_b = Document::new(ClientId::new(2));
+
+    doc_a.local_insert(0, "Hello").unwrap();
+    let hello_block = doc_a.store.get(&doc_a.head.unwrap()).unwrap().clone();
+    doc_b.remote_insert(hello_block).unwrap();
+
+    doc_a.local_insert(2, "X").unwrap();
+    doc_b.local_insert(3, "Y").unwrap();
+
+    let x_id = BlockId::new(ClientId::new(1), Clock::new(5));
+    let x_block = doc_a.store.get(&x_id).unwrap().clone();
+
+    let y_id = BlockId::new(ClientId::new(2), Clock::new(0));
+    let y_block = doc_b.store.get(&y_id).unwrap().clone();
+
+    doc_a.remote_insert(y_block).unwrap();
+    doc_b.remote_insert(x_block).unwrap();
+
+    assert_eq!(
+        doc_a.get_text(),
+        doc_b.get_text(),
+        "documents must converge"
+    );
+}
+
+#[test]
+fn remote_block_referencing_unreceived_cross_client_origin_is_buffered() {
+    let mut doc = Document::new(ClientId::new(99));
+    let c1 = ClientId::new(1);
+    let c2 = ClientId::new(2);
+
+    let c1_block_id = BlockId::new(c1, Clock::new(0));
+    let c2_block_id = BlockId::new(c2, Clock::new(0));
+
+    let c2_block = Block::new(
+        c2_block_id,
+        Some(c1_block_id),
+        None,
+        "B".to_string(),
+    );
+    doc.remote_insert(c2_block).unwrap();
+    assert_eq!(
+        doc.get_text(),
+        "",
+        "block with missing cross-client origin must be buffered"
+    );
+
+    let c1_block = Block::new(c1_block_id, None, None, "A".to_string());
+    doc.remote_insert(c1_block).unwrap();
+
+    assert_eq!(doc.get_text(), "AB");
+}
+
+#[test]
+fn cross_client_dependency_chain_drains_in_order() {
+    let mut doc = Document::new(ClientId::new(99));
+    let c1 = ClientId::new(1);
+    let c2 = ClientId::new(2);
+    let c3 = ClientId::new(3);
+
+    let c1_id = BlockId::new(c1, Clock::new(0));
+    let c2_id = BlockId::new(c2, Clock::new(0));
+    let c3_id = BlockId::new(c3, Clock::new(0));
+
+    doc.remote_insert(Block::new(c3_id, Some(c2_id), None, "C".to_string()))
+        .unwrap();
+    doc.remote_insert(Block::new(c2_id, Some(c1_id), None, "B".to_string()))
+        .unwrap();
+    assert_eq!(doc.get_text(), "", "chain still missing the root");
+
+    doc.remote_insert(Block::new(c1_id, None, None, "A".to_string()))
+        .unwrap();
+
+    assert_eq!(doc.get_text(), "ABC");
 }
