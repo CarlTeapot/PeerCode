@@ -1,5 +1,5 @@
 .PHONY: help install install-linux-deps dev prod prod-build prod-run dev-gateway build-gateway build test lint format clean \
-        format-all lint-all test-all
+        format-all lint-all test-all check
 
 FRONTEND_BUILD_OUT := tauri-app/dist/index.html
 FRONTEND_BUILD_INPUTS := $(shell git ls-files tauri-app/src) tauri-app/index.html tauri-app/vite.config.ts tauri-app/package.json tauri-app/package-lock.json tauri-app/.env.production
@@ -50,6 +50,8 @@ lint-go:
 	cd gateway && go vet ./...
 
 lint-all: lint-frontend lint-crdt lint-tauri lint-go
+
+check: format-all lint-all
 
 
 # ------------- testing ---------------
