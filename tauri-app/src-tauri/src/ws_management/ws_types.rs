@@ -12,11 +12,12 @@ pub enum WsConnection {
     Disconnected,
     Connecting,
     Connected {
-        sink: Sink,
         #[allow(dead_code)]
         session_id: String,
         #[allow(dead_code)]
-        reader: JoinHandle<()>,
+        receiver: JoinHandle<()>,
+        #[allow(dead_code)]
+        sender: JoinHandle<()>,
     },
 }
 

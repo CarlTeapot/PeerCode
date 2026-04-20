@@ -26,30 +26,30 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("[gateway] upgrade failed for room %q: %v\n", roomID, err)
 		return
 	}
-	defer func() {
-		gracefulClose(ctx, conn, "")
-		conn.CloseNow()
-	}()
 
 	fmt.Printf("[gateway] client connected  room=%s\n", roomID)
 
 	ctx := r.Context()
+	defer func() {
+		gracefulClose(ctx, conn, "")
+		conn.CloseNow()
+	}()
 	for {
 		msgType, msg, err := conn.Read(ctx)
 		if err != nil {
-			fmt.Printf("[gateway] client disconnected room=%s: %v\n", roomID, err)
+			fmt.Printf("client disconnected room=%s: %v\n", roomID, err)
 			return
 		}
 
 		switch msgType {
 		case websocket.MessageText:
-			fmt.Printf("[gateway] text  room=%s  %s\n", roomID, msg)
+			fmt.Printf("text  room=%s  %s\n", roomID, msg)
 		case websocket.MessageBinary:
-			fmt.Printf("[gateway] binary room=%s  %d bytes\n", roomID, len(msg))
+			fmt.Printf("binary room=%s  %d bytes\n", roomID, len(msg))
 		}
 
 		if err := conn.Write(ctx, msgType, msg); err != nil {
-			fmt.Printf("[gateway] write error room=%s: %v\n", roomID, err)
+			fmt.Printf("write error room=%s: %v\n", roomID, err)
 			return
 		}
 	}
