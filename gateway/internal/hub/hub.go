@@ -26,7 +26,10 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("[gateway] upgrade failed for room %q: %v\n", roomID, err)
 		return
 	}
-	defer conn.CloseNow()
+	defer func() {
+		gracefulClose(ctx, conn, "")
+		conn.CloseNow()
+	}()
 
 	fmt.Printf("[gateway] client connected  room=%s\n", roomID)
 
