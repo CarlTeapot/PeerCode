@@ -34,13 +34,4 @@ impl StateVector {
         let seen = self.get(&id.client);
         seen == id.clock.value
     }
-
-    // empty for now , will implement later when we have the basic structure in place
-    //pub fn diff_from(&self, remote: &StateVector) -> Vec<(ClientId, u64)> {}
-
-    //pub fn merge(&mut self, other: &StateVector) {}
-
-    //pub fn encode(&self) -> Vec<u8> {}
-
-    //pub fn decode(bytes: &[u8]) -> Result<Self, &'static str> {}
 }

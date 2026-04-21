@@ -18,19 +18,14 @@ impl StructStore {
         self.get(id).is_some()
     }
 
-    pub fn insert(&mut self, block: Block) {
-        let list = self.blocks.entry(block.id.client).or_default();
-        list.push(block);
+    pub fn total_blocks(&self) -> usize {
+        self.blocks.values().map(|v| v.len()).sum()
     }
 
-    pub fn insert_after_block(&mut self, prev_block_id: &BlockId, block: Block) {
-        let client = prev_block_id.client;
-        let list = self
-            .blocks
-            .get_mut(&client)
-            .expect("client list must exist");
-        let idx = Self::find_index(list, prev_block_id.clock.value).expect("prev block must exist");
-        list.insert(idx + 1, block);
+    pub fn insert(&mut self, block: Block) {
+        let list = self.blocks.entry(block.id.client).or_default();
+        let pos = list.partition_point(|b| b.id.clock.value < block.id.clock.value);
+        list.insert(pos, block);
     }
 
     pub fn get(&self, id: &BlockId) -> Option<&Block> {
@@ -86,13 +81,4 @@ impl StructStore {
             None
         }
     }
-
-    // Empty for now , will implement later when we have the basic structure in place
-    //pub fn get_missing_blocks(&self, remote_sv: &StateVector) -> Vec<&Block> {    }
-
-    //pub fn split_block_at(&mut self, client: ClientId, split_clock: u64) -> Option<BlockId> {}
-
-    //pub fn try_squash_tail(&mut self, client: ClientId) {}
-
-    //pub fn undelete(&mut self, id: &BlockId) -> bool {}
 }
