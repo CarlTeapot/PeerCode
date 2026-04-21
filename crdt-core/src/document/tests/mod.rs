@@ -1,4 +1,4 @@
-use super::Document;
+use super::{Document, RemoteChange};
 use crate::error::DocumentError;
 use crate::structs::Block;
 use crate::types::{BlockId, ClientId, Clock};
@@ -624,4 +624,172 @@ fn cross_client_dependency_chain_drains_in_order() {
         .unwrap();
 
     assert_eq!(doc.get_text(), "ABC");
+}
+
+#[test]
+fn remote_insert_returns_change_with_visible_position() {
+    let mut doc = Document::new(ClientId::new(99));
+    doc.local_insert(0, "Hello").unwrap();
+
+    let remote_id = BlockId::new(ClientId::new(7), Clock::new(0));
+    let origin_left = Some(block_id(99, 4));
+    let block = Block::new(remote_id, origin_left, None, "!".to_string());
+
+    let changes = doc.remote_insert(block).unwrap();
+
+    assert_eq!(
+        changes,
+        vec![RemoteChange::Insert {
+            position: 5,
+            content: "!".to_string(),
+        }]
+    );
+}
+
+#[test]
+fn remote_insert_returns_empty_for_pending_and_duplicate() {
+    let mut doc = Document::new(ClientId::new(99));
+
+    let missing_origin = BlockId::new(ClientId::new(1), Clock::new(0));
+    let pending_block = Block::new(
+        BlockId::new(ClientId::new(2), Clock::new(0)),
+        Some(missing_origin),
+        None,
+        "X".to_string(),
+    );
+    let pending_changes = doc.remote_insert(pending_block).unwrap();
+    assert!(pending_changes.is_empty(), "pending yields no changes");
+
+    doc.remote_insert(Block::new(missing_origin, None, None, "A".to_string()))
+        .unwrap();
+    let duplicate = Block::new(missing_origin, None, None, "A".to_string());
+    let dup_changes = doc.remote_insert(duplicate).unwrap();
+    assert!(dup_changes.is_empty(), "duplicate yields no changes");
+}
+
+#[test]
+fn remote_insert_drained_pending_returns_all_changes_in_order() {
+    let mut doc = Document::new(ClientId::new(99));
+    let c1 = ClientId::new(1);
+    let c2 = ClientId::new(2);
+
+    let c1_id = BlockId::new(c1, Clock::new(0));
+    let c2_id = BlockId::new(c2, Clock::new(0));
+
+    let buffered = doc
+        .remote_insert(Block::new(c2_id, Some(c1_id), None, "B".to_string()))
+        .unwrap();
+    assert!(buffered.is_empty());
+
+    let changes = doc
+        .remote_insert(Block::new(c1_id, None, None, "A".to_string()))
+        .unwrap();
+
+    assert_eq!(
+        changes,
+        vec![
+            RemoteChange::Insert {
+                position: 0,
+                content: "A".to_string()
+            },
+            RemoteChange::Insert {
+                position: 1,
+                content: "B".to_string()
+            },
+        ]
+    );
+    assert_eq!(doc.get_text(), "AB");
+}
+
+#[test]
+fn apply_delete_set_returns_delete_events_with_visible_positions() {
+    let client = ClientId::new(1);
+    let mut doc_a = Document::new(client);
+    doc_a.local_insert(0, "Hello").unwrap();
+
+    let mut doc_b = Document::new(ClientId::new(2));
+    doc_b
+        .remote_insert(Block::new(
+            BlockId::new(client, Clock::new(0)),
+            None,
+            None,
+            "Hello".to_string(),
+        ))
+        .unwrap();
+
+    doc_a.delete(1, 3).unwrap();
+
+    let changes = doc_b.apply_delete_set(&doc_a.delete_set).unwrap();
+
+    assert_eq!(
+        changes,
+        vec![RemoteChange::Delete {
+            position: 1,
+            length: 3,
+        }]
+    );
+    assert_eq!(doc_b.get_text(), "Ho");
+}
+
+#[test]
+fn apply_delete_set_is_idempotent_and_emits_nothing_on_resend() {
+    let client = ClientId::new(1);
+    let mut doc_a = Document::new(client);
+    doc_a.local_insert(0, "Hello").unwrap();
+    doc_a.delete(0, 2).unwrap();
+
+    let mut doc_b = Document::new(ClientId::new(2));
+    doc_b
+        .remote_insert(Block::new(
+            BlockId::new(client, Clock::new(0)),
+            None,
+            None,
+            "Hello".to_string(),
+        ))
+        .unwrap();
+
+    let first = doc_b.apply_delete_set(&doc_a.delete_set).unwrap();
+    assert_eq!(first.len(), 1);
+
+    let second = doc_b.apply_delete_set(&doc_a.delete_set).unwrap();
+    assert!(
+        second.is_empty(),
+        "already-tombstoned runs must not emit repeat Delete events"
+    );
+}
+
+#[test]
+fn apply_delete_set_buffers_until_block_arrives_then_drains_on_remote_insert() {
+    let author = ClientId::new(1);
+    let mut doc = Document::new(ClientId::new(2));
+
+    let mut ds = crate::store::DeleteSet::new();
+    ds.add(BlockId::new(author, Clock::new(0)), 3);
+
+    let buffered = doc.apply_delete_set(&ds).unwrap();
+    assert!(buffered.is_empty(), "no block yet, nothing to delete");
+
+    let changes = doc
+        .remote_insert(Block::new(
+            BlockId::new(author, Clock::new(0)),
+            None,
+            None,
+            "ABC".to_string(),
+        ))
+        .unwrap();
+
+    assert_eq!(
+        changes,
+        vec![
+            RemoteChange::Insert {
+                position: 0,
+                content: "ABC".to_string()
+            },
+            RemoteChange::Delete {
+                position: 0,
+                length: 3,
+            },
+        ]
+    );
+    assert_eq!(doc.get_text(), "");
 }

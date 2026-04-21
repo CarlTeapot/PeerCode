@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::types::BlockId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -7,8 +9,8 @@ pub enum DocumentError {
     PendingQueueFull,
 }
 
-impl std::fmt::Display for DocumentError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for DocumentError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DocumentError::BlockNotFound(id) => write!(
                 f,

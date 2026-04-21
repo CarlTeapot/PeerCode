@@ -1,106 +1,119 @@
-use super::Document;
+use std::mem;
+
+use super::{Document, RemoteChange};
 use crate::error::DocumentError;
 use crate::store::DeleteSet;
 use crate::structs::Block;
 use crate::types::{BlockId, Clock};
 
-/// Classification of an incoming remote block relative to local state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Readiness {
-    /// Every prerequisite is present; the block can be integrated now.
+enum BlockReadiness {
     Ready,
-    /// The block depends on something not yet seen
     Pending,
-    /// We have already integrated this clock range.
     Duplicate,
 }
 
 impl Document {
-    pub fn remote_insert(&mut self, block: Block) -> Result<(), DocumentError> {
+
+    /// Integrate a remote block. Returns the list of visible-text changes
+    pub fn remote_insert(&mut self, block: Block) -> Result<Vec<RemoteChange>, DocumentError> {
         match self.classify_block(&block) {
-            Readiness::Duplicate => return Ok(()),
-            Readiness::Pending => {
+            BlockReadiness::Duplicate => return Ok(Vec::new()),
+            BlockReadiness::Pending => {
                 self.pending_blocks.push(block);
-                return Ok(());
+                return Ok(Vec::new());
             }
-            Readiness::Ready => {}
+            BlockReadiness::Ready => {}
         }
 
+        let mut changes = Vec::new();
+        changes.push(self.integrate_ready_block(block)?);
+        self.drain_pending(&mut changes)?;
+        Ok(changes)
+    }
+
+    /// Apply a remote delete set. Returns a list of visible-text Delete events
+    /// the UI should replay in order.
+    pub fn apply_delete_set(
+        &mut self,
+        remote: &DeleteSet,
+    ) -> Result<Vec<RemoteChange>, DocumentError> {
+        let mut changes = Vec::new();
+        let unapplied = self.try_apply_delete_set(remote, &mut changes)?;
+        if !unapplied.is_empty() {
+            self.pending_delete_sets.push(unapplied);
+        }
+        self.seen_delete_set.merge(remote);
+        Ok(changes)
+    }
+
+    /// Integrate a block that has already been classified as `Ready`, and
+    /// advance the state vector. 
+    fn integrate_ready_block(&mut self, block: Block) -> Result<RemoteChange, DocumentError> {
         let client = block.id.client;
+        let block_id = block.id;
         let end_clock = block.id.clock.value + block.len;
+        let content = block.content().to_string();
 
         self.pre_split_for_block(&block)?;
         self.integrate(block)?;
         self.state_vector.update(client, end_clock);
 
-        self.drain_pending()?;
-        Ok(())
+        let position = self.visible_position_of(block_id);
+        Ok(RemoteChange::Insert { position, content })
     }
 
-    pub fn apply_delete_set(&mut self, remote: &DeleteSet) -> Result<(), DocumentError> {
-        let unapplied = self.try_apply_delete_set(remote)?;
-        if !unapplied.is_empty() {
-            self.pending_delete_sets.push(unapplied);
-        }
-        self.seen_delete_set.merge(remote);
-        Ok(())
-    }
-
-    fn classify_block(&self, block: &Block) -> Readiness {
+    fn classify_block(&self, block: &Block) -> BlockReadiness {
         let seen = self.state_vector.get(&block.id.client);
         let clock = block.id.clock.value;
 
         if seen > clock {
-            return Readiness::Duplicate;
+            return BlockReadiness::Duplicate;
         }
         if seen < clock {
-            return Readiness::Pending;
+            return BlockReadiness::Pending;
         }
         if let Some(ol) = block.origin_left
             && !self.store.contains_key(&ol)
         {
-            return Readiness::Pending;
+            return BlockReadiness::Pending;
         }
         if let Some(or) = block.origin_right
             && !self.store.contains_key(&or)
         {
-            return Readiness::Pending;
+            return BlockReadiness::Pending;
         }
-        Readiness::Ready
+        BlockReadiness::Ready
     }
 
     /// Repeatedly drain pending blocks and pending delete sets until a pass
-    /// makes no further progress.
-    fn drain_pending(&mut self) -> Result<(), DocumentError> {
+    /// makes no further progress. 
+    fn drain_pending(&mut self, changes: &mut Vec<RemoteChange>) -> Result<(), DocumentError> {
         loop {
             let mut progress = false;
 
-            let candidates: Vec<Block> = self.pending_blocks.drain(..).collect();
+            let candidates: Vec<Block> = mem::take(&mut self.pending_blocks);
             let mut still_pending_blocks: Vec<Block> = Vec::new();
             for block in candidates {
                 match self.classify_block(&block) {
-                    Readiness::Ready => {
-                        let client = block.id.client;
-                        let end_clock = block.id.clock.value + block.len;
-                        self.pre_split_for_block(&block)?;
-                        self.integrate(block)?;
-                        self.state_vector.update(client, end_clock);
+                    BlockReadiness::Ready => {
+                        changes.push(self.integrate_ready_block(block)?);
                         progress = true;
                     }
-                    Readiness::Duplicate => {
+                    BlockReadiness::Duplicate => {
                         progress = true;
                     }
-                    Readiness::Pending => {
+                    BlockReadiness::Pending => {
                         still_pending_blocks.push(block);
                     }
                 }
             }
             self.pending_blocks = still_pending_blocks;
 
-            let candidate_ds: Vec<DeleteSet> = self.pending_delete_sets.drain(..).collect();
+            let candidate_ds: Vec<DeleteSet> = mem::take(&mut self.pending_delete_sets);
             let mut still_pending_ds: Vec<DeleteSet> = Vec::new();
             for ds in candidate_ds {
-                let unapplied = self.try_apply_delete_set(&ds)?;
+                let unapplied = self.try_apply_delete_set(&ds, changes)?;
                 if unapplied.is_empty() {
                     progress = true;
                 } else {
@@ -116,8 +129,12 @@ impl Document {
         Ok(())
     }
 
-    /// Attempt to apply every range in `remote`.
-    fn try_apply_delete_set(&mut self, remote: &DeleteSet) -> Result<DeleteSet, DocumentError> {
+    /// Attempt to apply every range in `remote`,
+    fn try_apply_delete_set(
+        &mut self,
+        remote: &DeleteSet,
+        changes: &mut Vec<RemoteChange>,
+    ) -> Result<DeleteSet, DocumentError> {
         let mut unapplied = DeleteSet::new();
 
         for (client, range) in remote.iter() {
@@ -127,13 +144,10 @@ impl Document {
             while current_clock < end_clock {
                 let id = BlockId::new(*client, Clock::new(current_clock));
 
-                let (block_start, block_len, block_id) = match self.store.get(&id) {
-                    Some(b) => (b.id.clock.value, b.len, b.id),
+                let (block_start, block_len, block_id, was_deleted) = match self.store.get(&id) {
+                    Some(b) => (b.id.clock.value, b.len, b.id, b.is_deleted),
                     None => {
-                        unapplied.add(
-                            BlockId::new(*client, Clock::new(current_clock)),
-                            end_clock - current_clock,
-                        );
+                        unapplied.add(id, end_clock - current_clock);
                         break;
                     }
                 };
@@ -149,11 +163,24 @@ impl Document {
                     self.split_block(block_id, remaining_delete)?;
                 }
 
+                let position_before = if !was_deleted {
+                    Some(self.visible_position_of(block_id))
+                } else {
+                    None
+                };
+
                 let actual_len = self
                     .store
                     .mark_deleted(&block_id)
                     .ok_or(DocumentError::BlockNotFound(block_id))?
                     .len;
+
+                if let Some(position) = position_before {
+                    changes.push(RemoteChange::Delete {
+                        position,
+                        length: actual_len,
+                    });
+                }
 
                 current_clock += actual_len;
             }

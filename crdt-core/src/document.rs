@@ -7,6 +7,12 @@ mod ops;
 mod pending;
 mod traversal;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteChange {
+    Insert { position: u64, content: String },
+    Delete { position: u64, length: u64 },
+}
+
 #[derive(Debug)]
 pub struct Document {
     pub client_id: ClientId,

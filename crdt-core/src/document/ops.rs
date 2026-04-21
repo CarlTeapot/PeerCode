@@ -11,28 +11,28 @@ impl Document {
     ) -> Result<(Option<BlockId>, Option<BlockId>), DocumentError> {
         let (block, offset, tail_id) = self.get_block_and_offset_by_position(position);
 
-        if let Some(block_id) = block {
-            if offset == 0 {
-                let block_ref = self
-                    .store
-                    .get(&block_id)
-                    .ok_or(DocumentError::BlockNotFound(block_id))?;
-                Ok((block_ref.left(), Some(block_id)))
-            } else {
-                self.split_block(block_id, offset)?;
-                let left_ref = self
-                    .store
-                    .get(&block_id)
-                    .ok_or(DocumentError::BlockNotFound(block_id))?;
-                let origin_left_id =
-                    BlockId::new(block_id.client, block_id.clock.advance(offset - 1));
-                Ok((Some(origin_left_id), left_ref.right()))
+        let Some(block_id) = block else {
+            if offset > 0 {
+                return Err(DocumentError::OutOfBounds(position));
             }
-        } else if offset > 0 {
-            Err(DocumentError::OutOfBounds(position))
-        } else {
-            Ok((tail_id, None))
+            return Ok((tail_id, None));
+        };
+
+        if offset == 0 {
+            let block_ref = self
+                .store
+                .get(&block_id)
+                .ok_or(DocumentError::BlockNotFound(block_id))?;
+            return Ok((block_ref.left(), Some(block_id)));
         }
+
+        self.split_block(block_id, offset)?;
+        let left_ref = self
+            .store
+            .get(&block_id)
+            .ok_or(DocumentError::BlockNotFound(block_id))?;
+        let origin_left_id = BlockId::new(block_id.client, block_id.clock.advance(offset - 1));
+        Ok((Some(origin_left_id), left_ref.right()))
     }
 
     pub fn local_insert(&mut self, position: u64, content: &str) -> Result<(), DocumentError> {
@@ -129,7 +129,7 @@ impl Document {
             let end_clock = range.end();
 
             while current_clock < end_clock {
-                let id = BlockId::new(*client, crate::types::Clock::new(current_clock));
+                let id = BlockId::new(*client, Clock::new(current_clock));
 
                 let Some(block) = self.store.get(&id) else {
                     break;

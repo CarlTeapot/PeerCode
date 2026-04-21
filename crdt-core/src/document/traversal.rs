@@ -74,6 +74,25 @@ impl Document {
         }
     }
 
+    /// Visible-text character position of the block identified by `target`
+    pub(super) fn visible_position_of(&self, target: BlockId) -> u64 {
+        let mut pos = 0u64;
+        let mut curr = self.head;
+        while let Some(id) = curr {
+            if id == target {
+                return pos;
+            }
+            let Some(block) = self.store.get(&id) else {
+                break;
+            };
+            if !block.is_deleted {
+                pos += block.len;
+            }
+            curr = block.right();
+        }
+        pos
+    }
+
     /// Locate the block and intra-block offset that corresponds to a visible
     /// character position. Returns `(block_id, offset_within_block, tail_id)`.
     pub(super) fn get_block_and_offset_by_position(
