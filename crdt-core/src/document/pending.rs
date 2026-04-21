@@ -14,7 +14,6 @@ enum BlockReadiness {
 }
 
 impl Document {
-
     /// Integrate a remote block. Returns the list of visible-text changes
     pub fn remote_insert(&mut self, block: Block) -> Result<Vec<RemoteChange>, DocumentError> {
         match self.classify_block(&block) {
@@ -48,7 +47,7 @@ impl Document {
     }
 
     /// Integrate a block that has already been classified as `Ready`, and
-    /// advance the state vector. 
+    /// advance the state vector.
     fn integrate_ready_block(&mut self, block: Block) -> Result<RemoteChange, DocumentError> {
         let client = block.id.client;
         let block_id = block.id;
@@ -87,7 +86,7 @@ impl Document {
     }
 
     /// Repeatedly drain pending blocks and pending delete sets until a pass
-    /// makes no further progress. 
+    /// makes no further progress.
     fn drain_pending(&mut self, changes: &mut Vec<RemoteChange>) -> Result<(), DocumentError> {
         loop {
             let mut progress = false;

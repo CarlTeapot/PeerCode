@@ -25,4 +25,8 @@ dist-ssr
 gateway/gateway
 **/target/
 
-tauri-app/src-tauri/binaries/cloudflared-*
+tauri-app/src-tauri/binaries/
+# Secrets
+.env
+.env.*
+!.env.example
