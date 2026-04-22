@@ -6,10 +6,10 @@ use tauri_plugin_shell::process::CommandChild;
 
 pub struct AppState {
     pub document: Mutex<Document>,
-    #[cfg(debug_assertions)]
-    pub crdt_logging_enabled: AtomicBool,
     pub role: Mutex<AppRole>,
     pub processes: Mutex<HostProcesses>,
+    #[cfg(debug_assertions)]
+    pub crdt_logging_enabled: AtomicBool,
 }
 
 pub enum AppRole {

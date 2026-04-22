@@ -1,6 +1,7 @@
 mod config;
 mod crdt_handler;
 mod debug;
+mod identity;
 mod session;
 mod state;
 mod tunnel;
@@ -46,6 +47,8 @@ pub fn run() {
             session::disconnect_websocket,
             session::parse_join_url,
             session::get_session_info,
+            identity::get_identity,
+            identity::set_username,
             #[cfg(debug_assertions)]
             crdt_handler::toggle_crdt_logging
         ])
