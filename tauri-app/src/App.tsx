@@ -3,7 +3,7 @@ import type { editor } from "monaco-editor";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { UsernameGate, useIdentityUsername } from "./usernameSetup";
+import { UsernameGate } from "./usernameSetup";
 import "./App.css";
 
 interface LogEntry {
@@ -11,11 +11,13 @@ interface LogEntry {
   html: string;
 }
 
-function AppContent() {
+interface AppContentProps {
+  username: string;
+}
+
+function AppContent({ username }: AppContentProps) {
   const isDevFeaturesEnabled = import.meta.env.VITE_DEV_FEATURES === "true";
   const [status, setStatus] = useState("loading...");
-
-  const username = useIdentityUsername();
   const [statusReady, setStatusReady] = useState(false);
   const [eventLog, setEventLog] = useState<LogEntry[]>([]);
   const eventCountRef = useRef(0);
@@ -255,7 +257,7 @@ function AppContent() {
 function App() {
   return (
     <UsernameGate>
-      <AppContent />
+      {(username) => <AppContent username={username} />}
     </UsernameGate>
   );
 }

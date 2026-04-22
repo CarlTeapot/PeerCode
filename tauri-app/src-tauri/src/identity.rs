@@ -12,32 +12,31 @@ struct PersistedIdentity {
     username: Option<String>,
 }
 
-fn identity_path(app: &AppHandle) -> PathBuf {
-    app.path()
+fn identity_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
         .app_data_dir()
-        .expect("no app data dir")
-        .join(IDENTITY_FILE)
+        .map_err(|e| format!("could not resolve app data dir: {e}"))?
+        .join(IDENTITY_FILE))
 }
 
-fn load_raw(app: &AppHandle) -> PersistedIdentity {
-    let path = identity_path(app);
-    fs::read_to_string(&path)
+fn load_raw(app: &AppHandle) -> Result<PersistedIdentity, String> {
+    let path = identity_path(app)?;
+    Ok(fs::read_to_string(&path)
         .ok()
         .and_then(|s| toml::from_str::<PersistedIdentity>(&s).ok())
-        .unwrap_or(PersistedIdentity { username: None })
+        .unwrap_or(PersistedIdentity { username: None }))
 }
 
-fn persist(app: &AppHandle, identity: &PersistedIdentity) -> std::io::Result<()> {
-    let path = identity_path(app);
+fn persist(app: &AppHandle, identity: &PersistedIdentity) -> Result<(), String> {
+    let path = identity_path(app)?;
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let tmp = path.with_file_name(".identity.toml.tmp");
-    fs::write(
-        &tmp,
-        toml::to_string_pretty(identity).expect("serialize failed"),
-    )?;
-    fs::rename(tmp, path)
+    let serialized = toml::to_string_pretty(identity).map_err(|e| e.to_string())?;
+    fs::write(&tmp, serialized).map_err(|e| e.to_string())?;
+    fs::rename(tmp, path).map_err(|e| e.to_string())
 }
 
 pub fn sanitize_username(raw: &str) -> Option<String> {
@@ -55,11 +54,11 @@ pub struct IdentityDto {
 }
 
 #[tauri::command]
-pub fn get_identity(app: AppHandle) -> IdentityDto {
-    let id = load_raw(&app);
-    IdentityDto {
+pub fn get_identity(app: AppHandle) -> Result<IdentityDto, String> {
+    let id = load_raw(&app)?;
+    Ok(IdentityDto {
         username: id.username,
-    }
+    })
 }
 
 #[tauri::command]
@@ -71,5 +70,4 @@ pub fn set_username(app: AppHandle, username: String) -> Result<(), String> {
             username: Some(clean),
         },
     )
-    .map_err(|e| e.to_string())
 }

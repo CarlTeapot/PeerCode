@@ -64,53 +64,27 @@ const errorStyle: React.CSSProperties = {
   minHeight: 16,
 };
 
-/**
- * Returns the persisted username once it is available.
- * Safe to call inside a component that is already rendered under UsernameGate
- * (the gate guarantees a username exists before children mount).
- */
-export function useIdentityUsername(): string {
-  const [username, setUsername] = useState("");
-  useEffect(() => {
-    invoke<{ username: string | null }>("get_identity").then((id) => {
-      if (id.username) setUsername(id.username);
-    });
-  }, []);
-  return username;
-}
-
 interface UsernameGateProps {
-  children: React.ReactNode;
+  children: (username: string) => React.ReactNode;
 }
 
 export function UsernameGate({ children }: UsernameGateProps) {
-  const [ready, setReady] = useState(false);
-  const [checking, setChecking] = useState(true);
+  // null = still checking; "" = checked, no username yet; string = ready
+  const [username, setUsername] = useState<string | null>(null);
 
   useEffect(() => {
     invoke<{ username: string | null }>("get_identity")
-      .then((id) => {
-        if (id.username) setReady(true);
-      })
-      .finally(() => setChecking(false));
+      .then((id) => setUsername(id.username ?? ""))
+      .catch(() => setUsername(""));
   }, []);
 
-  if (checking) return null;
-  if (ready) return <>{children}</>;
-
-  return (
-    <>
-      <FirstRunModal onDone={() => setReady(true)} />
-      {/* Render children underneath but blocked by the overlay */}
-      <div style={{ pointerEvents: "none", filter: "blur(4px)" }}>
-        {children}
-      </div>
-    </>
-  );
+  if (username === null) return null;
+  if (username === "") return <FirstRunModal onDone={setUsername} />;
+  return <>{children(username)}</>;
 }
 
 interface FirstRunModalProps {
-  onDone: () => void;
+  onDone: (username: string) => void;
 }
 
 function FirstRunModal({ onDone }: FirstRunModalProps) {
@@ -129,7 +103,7 @@ function FirstRunModal({ onDone }: FirstRunModalProps) {
       setError("");
       try {
         await invoke("set_username", { username: clean });
-        onDone();
+        onDone(clean);
       } catch (err) {
         setError(String(err));
         setSaving(false);
