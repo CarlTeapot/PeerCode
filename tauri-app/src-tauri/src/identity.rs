@@ -2,9 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
-
-use crate::state::appstate::AppState;
+use tauri::{AppHandle, Manager};
 
 const IDENTITY_FILE: &str = "identity.toml";
 const MAX_USERNAME_LEN: usize = 32;
@@ -74,15 +72,4 @@ pub fn set_username(app: AppHandle, username: String) -> Result<(), String> {
         },
     )
     .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn register_peer(client_id: u64, username: String, state: State<'_, AppState>) {
-    let name = sanitize_username(&username).unwrap_or_else(|| format!("Peer#{client_id}"));
-    state.peers.lock().unwrap().insert(client_id, name);
-}
-
-#[tauri::command]
-pub fn get_peer_name(client_id: u64, state: State<'_, AppState>) -> Option<String> {
-    state.peers.lock().unwrap().get(&client_id).cloned()
 }

@@ -1,6 +1,5 @@
 use crdt_core::types::ClientId;
 use crdt_core::Document;
-use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 use tauri_plugin_shell::process::CommandChild;
@@ -9,8 +8,6 @@ pub struct AppState {
     pub document: Mutex<Document>,
     pub role: Mutex<AppRole>,
     pub processes: Mutex<HostProcesses>,
-    /// Maps peer client_id → display username. In-memory only; repopulated on reconnect.
-    pub peers: Mutex<HashMap<u64, String>>,
     #[cfg(debug_assertions)]
     pub crdt_logging_enabled: AtomicBool,
 }
@@ -50,7 +47,6 @@ impl AppState {
                 gateway: None,
                 tunnel: None,
             }),
-            peers: Mutex::new(HashMap::new()),
             #[cfg(debug_assertions)]
             crdt_logging_enabled: AtomicBool::new(false),
         }

@@ -49,8 +49,6 @@ pub fn run() {
             session::get_session_info,
             identity::get_identity,
             identity::set_username,
-            identity::register_peer,
-            identity::get_peer_name,
             #[cfg(debug_assertions)]
             crdt_handler::toggle_crdt_logging
         ])

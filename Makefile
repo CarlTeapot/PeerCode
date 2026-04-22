@@ -1,5 +1,6 @@
-.PHONY: help install install-linux-deps dev prod prod-build prod-run dev-gateway build-gateway build test lint format clean \
-        format-all lint-all test-all check reset-identity
+.PHONY: help install install-linux-deps install-audit-tools dev prod prod-build prod-run dev-gateway build-gateway build test lint format clean \
+        format-all lint-all test-all check reset-identity \
+        audit-frontend audit-crdt audit-tauri audit-go audit-all
 
 FRONTEND_BUILD_OUT := tauri-app/dist/index.html
 FRONTEND_BUILD_INPUTS := $(shell git ls-files tauri-app/src) tauri-app/index.html tauri-app/vite.config.ts tauri-app/package.json tauri-app/package-lock.json tauri-app/.env.production
@@ -18,6 +19,11 @@ install-linux-deps:
 # install frontend dependencies
 install:
 	cd tauri-app && npm install
+
+# install security audit tools (cargo-audit, govulncheck)
+install-audit-tools:
+	cargo install cargo-audit
+	go install golang.org/x/vuln/cmd/govulncheck@latest
 
 
 # ------------- formatting -------------- 
@@ -65,6 +71,22 @@ test-go:
 	cd gateway && go test -v ./...
 
 test-all: test-crdt test-tauri test-go
+
+
+# ------------- security audit ---------------
+audit-frontend:
+	cd tauri-app && npm audit --audit-level=high
+
+audit-crdt:
+	cd crdt-core && cargo generate-lockfile && cargo audit
+
+audit-tauri:
+	cd tauri-app/src-tauri && cargo generate-lockfile && cargo audit
+
+audit-go:
+	cd gateway && govulncheck ./...
+
+audit-all: audit-frontend audit-crdt audit-tauri audit-go
 
 
 # ------------- development ---------------
