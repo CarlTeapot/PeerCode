@@ -62,4 +62,3 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
-

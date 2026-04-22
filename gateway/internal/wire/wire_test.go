@@ -17,7 +17,6 @@ func TestDecodeOpFrame_Valid(t *testing.T) {
 	}
 }
 
-
 func TestDecodeOpFrame_EmptyPayloadIsValid(t *testing.T) {
 	payload, err := DecodeOpFrame([]byte{PrefixOp})
 	if err != nil {
@@ -45,7 +44,6 @@ func TestDecodeOpFrame_UnknownPrefix(t *testing.T) {
 		t.Fatalf("err message = %q, want to contain 0xFF", msg)
 	}
 }
-
 
 func TestDecodeOpFrame_SnapshotPrefixIsReserved(t *testing.T) {
 	_, err := DecodeOpFrame([]byte{PrefixSnapshot, 0x00})

@@ -1,4 +1,3 @@
-
 package wire
 
 import (
@@ -7,7 +6,7 @@ import (
 )
 
 const (
-	PrefixOp byte = 0x00
+	PrefixOp       byte = 0x00
 	PrefixSnapshot byte = 0x01
 )
 
@@ -16,7 +15,6 @@ var (
 	ErrUnknownPrefix        = errors.New("wire: unknown prefix")
 	ErrSnapshotNotSupported = errors.New("wire: snapshot frames not yet supported")
 )
-
 
 func DecodeOpFrame(frame []byte) ([]byte, error) {
 	if len(frame) == 0 {

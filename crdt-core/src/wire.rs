@@ -7,8 +7,7 @@ use crate::types::BlockId;
 pub const OP_PREFIX: u8 = 0x00;
 pub const SNAPSHOT_PREFIX: u8 = 0x01;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(bitcode::Encode, bitcode::Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, bitcode::Encode, bitcode::Decode)]
 pub struct WireBlock {
     pub id: BlockId,
     pub origin_left: Option<BlockId>,
@@ -33,8 +32,7 @@ impl From<WireBlock> for Block {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-#[derive(bitcode::Encode, bitcode::Decode)]
+#[derive(Debug, Clone, PartialEq, bitcode::Encode, bitcode::Decode)]
 pub enum OpMessage {
     Insert(WireBlock),
     Delete(DeleteSet),
