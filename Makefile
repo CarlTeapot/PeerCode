@@ -1,5 +1,5 @@
 .PHONY: help install install-linux-deps dev prod prod-build prod-run dev-gateway build-gateway build test lint format clean \
-        format-all lint-all test-all check
+        format-all lint-all test-all check reset-identity
 
 FRONTEND_BUILD_OUT := tauri-app/dist/index.html
 FRONTEND_BUILD_INPUTS := $(shell git ls-files tauri-app/src) tauri-app/index.html tauri-app/vite.config.ts tauri-app/package.json tauri-app/package-lock.json tauri-app/.env.production
@@ -101,6 +101,11 @@ build:
 	cd gateway && go build -o bin/gateway main.go
 	cd tauri-app && npm run build
 	cd tauri-app && npm run tauri build
+
+# delete the persisted username so the first-run prompt appears again on next launch
+# path follows XDG_DATA_HOME (defaults to ~/.local/share) + the app identifier
+reset-identity:
+	rm -f "$${XDG_DATA_HOME:-$$HOME/.local/share}/tauri-app/identity.toml"
 
 # clean up build artifacts
 clean:

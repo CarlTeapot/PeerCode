@@ -118,3 +118,6 @@ jobs:
 
       - name: Run Tests
         run: go test -v ./...
+
+      - name: Security Audit (govulncheck)
+        run: govulncheck ./...

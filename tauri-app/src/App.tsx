@@ -3,6 +3,7 @@ import type { editor } from "monaco-editor";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { UsernameGate, useIdentityUsername } from "./usernameSetup";
 import "./App.css";
 
 interface LogEntry {
@@ -10,9 +11,11 @@ interface LogEntry {
   html: string;
 }
 
-function App() {
+function AppContent() {
   const isDevFeaturesEnabled = import.meta.env.VITE_DEV_FEATURES === "true";
   const [status, setStatus] = useState("loading...");
+
+  const username = useIdentityUsername();
   const [statusReady, setStatusReady] = useState(false);
   const [eventLog, setEventLog] = useState<LogEntry[]>([]);
   const eventCountRef = useRef(0);
@@ -153,6 +156,20 @@ function App() {
     <>
       <div className="toolbar">
         <span>Monaco Test Harness</span>
+        {username && (
+          <span
+            style={{
+              color: "#7ab",
+              fontFamily: "monospace",
+              fontSize: 12,
+              padding: "2px 8px",
+              background: "#1a2a3a",
+              borderRadius: 3,
+            }}
+          >
+            {username}
+          </span>
+        )}
         {isDevFeaturesEnabled && (
           <button
             onClick={toggleLogging}
@@ -232,6 +249,14 @@ function App() {
         ))}
       </div>
     </>
+  );
+}
+
+function App() {
+  return (
+    <UsernameGate>
+      <AppContent />
+    </UsernameGate>
   );
 }
 
