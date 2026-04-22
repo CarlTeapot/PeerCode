@@ -9,8 +9,11 @@ pub fn insert(state: State<AppState>, position: u64, content: String) -> Result<
         .lock()
         .map_err(|_| "failed to lock document state".to_string())?;
 
+    // TODO(T10): forward the returned `Option<WireBlock>` to the ws writer
+    // as an encoded `OpMessage::Insert` frame.
     document
         .local_insert(position, &content)
+        .map(|_wire_block| ())
         .map_err(|err| format!("insert failed: {err:?}"))
 }
 
@@ -21,8 +24,11 @@ pub fn delete(state: State<AppState>, position: u64, length: u64) -> Result<(), 
         .lock()
         .map_err(|_| "failed to lock document state".to_string())?;
 
+    // TODO(T10): forward the returned `DeleteSet` diff to the ws writer
+    // as an encoded `OpMessage::Delete` frame.
     document
         .delete(position, length)
+        .map(|_delete_set_diff| ())
         .map_err(|err| format!("delete failed: {err:?}"))
 }
 

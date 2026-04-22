@@ -1,11 +1,12 @@
 package hub
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 
 	"github.com/coder/websocket"
+
+	"gateway/internal/wire"
 )
 
 type Hub struct{}
@@ -31,29 +32,33 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	defer func() {
-		gracefulClose(ctx, conn, "")
+		_ = conn.Close(websocket.StatusNormalClosure, "")
 		conn.CloseNow()
 	}()
+
 	for {
 		msgType, msg, err := conn.Read(ctx)
 		if err != nil {
-			fmt.Printf("client disconnected room=%s: %v\n", roomID, err)
+			fmt.Printf("[gateway] client disconnected room=%s: %v\n", roomID, err)
 			return
 		}
 
 		switch msgType {
 		case websocket.MessageText:
-			fmt.Printf("text  room=%s  %s\n", roomID, msg)
-		case websocket.MessageBinary:
-			fmt.Printf("binary room=%s  %d bytes\n", roomID, len(msg))
-		}
+			fmt.Printf("[gateway] text  room=%s  %s\n", roomID, msg)
 
-		if err := conn.Write(ctx, msgType, msg); err != nil {
-			fmt.Printf("write error room=%s: %v\n", roomID, err)
-			return
+		case websocket.MessageBinary:
+			payload, err := wire.DecodeOpFrame(msg)
+			if err != nil {
+				fmt.Printf("[gateway] drop frame room=%s: %v\n", roomID, err)
+				continue
+			}
+			fmt.Printf("[gateway] op    room=%s  payload=%d bytes\n", roomID, len(payload))
+
+			if err := conn.Write(ctx, msgType, msg); err != nil {
+				fmt.Printf("[gateway] write error room=%s: %v\n", roomID, err)
+				return
+			}
 		}
 	}
-}
-func gracefulClose(ctx context.Context, conn *websocket.Conn, reason string) {
-	_ = conn.Close(websocket.StatusNormalClosure, reason)
 }

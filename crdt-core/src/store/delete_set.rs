@@ -1,7 +1,7 @@
 use crate::types::{BlockId, ClientId};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, bitcode::Encode, bitcode::Decode)]
 pub struct DeleteRange {
     pub start: u64,
     pub len: u64,
@@ -31,7 +31,7 @@ impl DeleteRange {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, bitcode::Encode, bitcode::Decode)]
 pub struct DeleteSet {
     ranges: HashMap<ClientId, Vec<DeleteRange>>,
 }
