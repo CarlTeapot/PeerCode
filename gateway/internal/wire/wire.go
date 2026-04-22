@@ -23,6 +23,8 @@ func DecodeOpFrame(frame []byte) ([]byte, error) {
 	switch frame[0] {
 	case PrefixOp:
 		return frame[1:], nil
+	// TODO(T15/T16): route snapshot frames (host → joiner) once the
+	// snapshot format and per-room cache land.
 	case PrefixSnapshot:
 		return nil, ErrSnapshotNotSupported
 	default:

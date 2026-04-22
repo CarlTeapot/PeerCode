@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::fmt;
 
 use crate::store::DeleteSet;
@@ -61,8 +62,8 @@ impl fmt::Display for WireError {
     }
 }
 
-impl std::error::Error for WireError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl Error for WireError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             WireError::Decode(e) => Some(e),
             _ => None,
@@ -79,11 +80,13 @@ pub fn encode_op(msg: &OpMessage) -> Vec<u8> {
 }
 
 pub fn decode_op(frame: &[u8]) -> Result<OpMessage, WireError> {
-    match frame.first() {
-        None => Err(WireError::EmptyFrame),
-        Some(&OP_PREFIX) => bitcode::decode(&frame[1..]).map_err(WireError::Decode),
-        Some(&SNAPSHOT_PREFIX) => Err(WireError::NotAnOp),
-        Some(&b) => Err(WireError::UnknownPrefix(b)),
+    let (&prefix, payload) = frame.split_first().ok_or(WireError::EmptyFrame)?;
+    match prefix {
+        OP_PREFIX => bitcode::decode(payload).map_err(WireError::Decode),
+        // TODO(T15): route through a snapshot decoder once the snapshot
+        // format lands;
+        SNAPSHOT_PREFIX => Err(WireError::NotAnOp),
+        b => Err(WireError::UnknownPrefix(b)),
     }
 }
 
