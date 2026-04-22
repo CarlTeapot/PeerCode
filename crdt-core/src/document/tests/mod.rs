@@ -2,6 +2,7 @@ use super::{Document, RemoteChange};
 use crate::error::DocumentError;
 use crate::structs::Block;
 use crate::types::{BlockId, ClientId, Clock};
+use crate::wire::WireBlock;
 
 fn block_id(client: u64, clock: u64) -> BlockId {
     BlockId::new(ClientId::new(client), Clock::new(clock))
@@ -792,4 +793,66 @@ fn apply_delete_set_buffers_until_block_arrives_then_drains_on_remote_insert() {
         ]
     );
     assert_eq!(doc.get_text(), "");
+}
+
+#[test]
+fn local_insert_returns_wire_block() {
+    let mut doc = Document::new(ClientId::new(1));
+    let wire = doc.local_insert(0, "hi").unwrap().expect("expected Some");
+    assert_eq!(wire.content, "hi");
+    assert_eq!(wire.id, BlockId::new(ClientId::new(1), Clock::new(0)));
+    assert_eq!(wire.origin_left, None);
+    assert_eq!(wire.origin_right, None);
+}
+
+#[test]
+fn local_insert_empty_returns_none() {
+    let mut doc = Document::new(ClientId::new(1));
+    assert!(doc.local_insert(0, "").unwrap().is_none());
+}
+
+#[test]
+fn local_insert_mid_document_returns_correct_origins() {
+    let mut doc = Document::new(ClientId::new(1));
+    doc.local_insert(0, "ac").unwrap();
+    let wire = doc.local_insert(1, "b").unwrap().expect("expected Some");
+    assert_eq!(wire.content, "b");
+    assert_eq!(
+        wire.origin_left,
+        Some(BlockId::new(ClientId::new(1), Clock::new(0)))
+    );
+    assert_eq!(doc.get_text(), "abc");
+}
+
+#[test]
+fn delete_returns_delete_set_diff_for_tombstoned_range() {
+    let mut doc = Document::new(ClientId::new(1));
+    doc.local_insert(0, "hello").unwrap();
+    let diff = doc.delete(1, 3).unwrap();
+    assert!(
+        !diff.is_empty(),
+        "diff must describe the 3 tombstoned chars"
+    );
+    assert_eq!(doc.get_text(), "ho");
+}
+
+#[test]
+fn delete_zero_length_returns_empty_diff() {
+    let mut doc = Document::new(ClientId::new(1));
+    doc.local_insert(0, "hi").unwrap();
+    let diff = doc.delete(0, 0).unwrap();
+    assert!(diff.is_empty());
+    assert_eq!(doc.get_text(), "hi");
+}
+
+#[test]
+fn wire_block_round_trip_reconstructs_identical_document() {
+    let mut doc_a = Document::new(ClientId::new(1));
+    let wire = doc_a.local_insert(0, "hi").unwrap().expect("expected Some");
+    let bytes = bitcode::encode(&wire);
+    let decoded: WireBlock = bitcode::decode(&bytes).expect("decode");
+
+    let mut doc_b = Document::new(ClientId::new(2));
+    doc_b.remote_insert(Block::from(decoded)).unwrap();
+    assert_eq!(doc_b.get_text(), "hi");
 }

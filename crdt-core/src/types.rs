@@ -1,4 +1,6 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, bitcode::Encode, bitcode::Decode,
+)]
 pub struct ClientId {
     pub value: u64,
 }
@@ -9,7 +11,9 @@ impl ClientId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, bitcode::Encode, bitcode::Decode,
+)]
 pub struct Clock {
     pub value: u64,
 }
@@ -28,7 +32,7 @@ impl Clock {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, bitcode::Encode, bitcode::Decode)]
 pub struct BlockId {
     pub client: ClientId,
     pub clock: Clock,

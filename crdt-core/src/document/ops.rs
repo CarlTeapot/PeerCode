@@ -3,6 +3,7 @@ use crate::error::DocumentError;
 use crate::store::DeleteSet;
 use crate::structs::Block;
 use crate::types::{BlockId, Clock};
+use crate::wire::WireBlock;
 
 impl Document {
     fn resolve_origins(
@@ -35,9 +36,13 @@ impl Document {
         Ok((Some(origin_left_id), left_ref.right()))
     }
 
-    pub fn local_insert(&mut self, position: u64, content: &str) -> Result<(), DocumentError> {
+    pub fn local_insert(
+        &mut self,
+        position: u64,
+        content: &str,
+    ) -> Result<Option<WireBlock>, DocumentError> {
         if content.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
 
         let (left_origin, right_origin) = self.resolve_origins(position)?;
@@ -46,18 +51,22 @@ impl Document {
         let new_id = BlockId::new(self.client_id, Clock::new(next_clock));
         let new_block = Block::new(new_id, left_origin, right_origin, content.to_string());
         let block_len = new_block.len;
+        let wire = WireBlock::from(&new_block);
 
         self.integrate(new_block)?;
         self.state_vector
             .update(self.client_id, next_clock + block_len);
 
-        Ok(())
+        Ok(Some(wire))
     }
 
     /// Delete `length` visible characters starting at `position`.
-    pub fn delete(&mut self, position: u64, length: u64) -> Result<(), DocumentError> {
+    /// Returns a `DeleteSet` containing only the ranges this call tombstoned
+    /// (the diff, not the cumulative document `delete_set`). Empty when
+    /// `length == 0`.
+    pub fn delete(&mut self, position: u64, length: u64) -> Result<DeleteSet, DocumentError> {
         if length == 0 {
-            return Ok(());
+            return Ok(DeleteSet::new());
         }
 
         let (first_id, start_offset, _) = self.get_block_and_offset_by_position(position);
@@ -73,6 +82,7 @@ impl Document {
         }
 
         let mut remaining = length;
+        let mut diff = DeleteSet::new();
 
         while remaining > 0 {
             let (is_deleted, block_len, right_id) = {
@@ -106,6 +116,7 @@ impl Document {
             };
 
             self.delete_set.add(current_id, deleted_len);
+            diff.add(current_id, deleted_len);
             remaining = remaining.saturating_sub(deleted_len);
 
             match next_id {
@@ -118,7 +129,7 @@ impl Document {
             return Err(DocumentError::OutOfBounds(position + length - remaining));
         }
 
-        Ok(())
+        Ok(diff)
     }
 
     /// Reclaim storage for every block whose tombstone is covered by
