@@ -20,7 +20,7 @@ pub enum AppRole {
         lan_url: Option<String>,
         public_url: Option<String>,
     },
-    // add guest laterr
+    Guest {},
 }
 
 impl AppRole {
@@ -29,7 +29,13 @@ impl AppRole {
             Self::Undecided => "idle",
             Self::Starting => "starting",
             Self::Host { .. } => "host",
+            Self::Guest { .. } => "guest",
         }
+    }
+
+    /// Returns true when a session may still be initiated (no active session yet).
+    pub fn can_initiate_session(&self) -> bool {
+        matches!(self, Self::Undecided | Self::Starting)
     }
 }
 

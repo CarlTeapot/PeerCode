@@ -1,6 +1,6 @@
+use crate::processes::process_coordinator;
 use crate::state::appstate::{AppRole, AppState};
 use crate::state::ws_state::WsState;
-use crate::tunnel;
 use tauri::{AppHandle, Manager, State};
 
 pub const GATEWAY_READY: &str = "session://gateway-ready";
@@ -40,17 +40,49 @@ pub struct JoinInfo {
 }
 
 #[tauri::command]
-pub fn start_host_session(app: AppHandle) -> Result<(), String> {
+pub async fn start_host_session(app: AppHandle) -> Result<(), String> {
     {
         let state = app.state::<AppState>();
         let mut role = state.role.lock().unwrap();
-        if !matches!(*role, AppRole::Undecided) {
-            return Err("A session is already running".into());
+        if !role.can_initiate_session() {
+            return Err("A session is already active".into());
         }
         *role = AppRole::Starting;
     }
 
-    tunnel::launch(app);
+    let (port, room_id) = process_coordinator::launch(app.clone()).await?;
+
+    connect(app, port, room_id).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn join_session(
+    url: String,
+    state: State<'_, AppState>,
+    ws: State<'_, WsState>,
+) -> Result<(), String> {
+    let join_info = parse_join_url(url)?;
+
+    {
+        let mut role = state.role.lock().unwrap();
+        if !role.can_initiate_session() {
+            return Err("A session is already active".into());
+        }
+        *role = AppRole::Starting;
+    }
+
+    let ws_url = format!("{}/ws?room={}", join_info.server_url, join_info.room_id);
+
+    ws.connect(&ws_url, join_info.room_id.clone())
+        .await
+        .map_err(|e| {
+            *state.role.lock().unwrap() = AppRole::Undecided;
+            e.to_string()
+        })?;
+
+    *state.role.lock().unwrap() = AppRole::Guest {};
+
     Ok(())
 }
 
@@ -109,4 +141,19 @@ pub fn parse_join_url(url: String) -> Result<JoinInfo, String> {
         server_url,
         room_id,
     })
+}
+
+async fn connect(app: AppHandle, port: u16, room_id: String) {
+    let host_client_id = {
+        let state = app.state::<AppState>();
+        let doc = state.document.lock().unwrap();
+        doc.client_id.value
+    };
+
+    let local_ws_url =
+        format!("ws://127.0.0.1:{port}/ws?room={room_id}&client_id={host_client_id}");
+    let ws = app.state::<WsState>();
+    if let Err(e) = ws.connect(&local_ws_url, room_id.clone()).await {
+        eprintln!("[ws] local connection failed (session still running): {e}");
+    }
 }

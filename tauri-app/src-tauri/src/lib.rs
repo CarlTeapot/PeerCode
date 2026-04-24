@@ -2,9 +2,9 @@ mod config;
 mod crdt_handler;
 mod debug;
 mod identity;
+mod processes;
 mod session;
 mod state;
-mod tunnel;
 mod ws_management;
 
 use crate::config::AppConfig;
@@ -28,8 +28,6 @@ pub fn run() {
             #[cfg(debug_assertions)]
             spawn_linked_list_logger(app.handle().clone());
 
-            let _ = session::start_host_session(app.handle().clone());
-
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -44,6 +42,7 @@ pub fn run() {
             crdt_handler::delete,
             session::start_host_session,
             session::stop_host_session,
+            session::join_session,
             session::disconnect_websocket,
             session::parse_join_url,
             session::get_session_info,
