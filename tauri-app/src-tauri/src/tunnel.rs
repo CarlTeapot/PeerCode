@@ -4,24 +4,21 @@ use crate::session::{
 };
 use crate::state::appstate::{AppRole, AppState};
 use crate::state::ws_state::WsState;
-use rand::Rng;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-pub fn generate_room_id() -> String {
-    format!("{:08x}", rand::thread_rng().gen::<u32>())
-}
-
-pub fn launch(app: AppHandle, room_id: String) {
+pub fn launch(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
-        if let Err(msg) = run_gateway(&app, &room_id).await {
+        if let Err(msg) = run_gateway(&app).await {
             emit_error(&app, msg);
         }
     });
 }
 
-async fn run_gateway(app: &AppHandle, room_id: &str) -> Result<(), String> {
+async fn run_gateway(app: &AppHandle) -> Result<(), String> {
     let (mut rx, child) = app
         .shell()
         .sidecar("peercode-gateway")
@@ -46,7 +43,8 @@ async fn run_gateway(app: &AppHandle, room_id: &str) -> Result<(), String> {
             let line = String::from_utf8_lossy(&bytes);
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(line.trim()) {
                 if let Some(port) = json.get("port").and_then(|v| v.as_u64()).map(|v| v as u16) {
-                    on_gateway_ready(app, port, room_id).await;
+                    let room_id = fetch_room_id(port).await?;
+                    on_gateway_ready(app, port, &room_id).await;
                     println!("Gateway ready");
                     tauri::async_runtime::spawn(pipe_gateway_logs(rx));
                     return Ok(());
@@ -132,25 +130,17 @@ fn run_cloudflared(app: AppHandle, port: u16, room_id: String) {
                         },
                     );
 
-                    let ws_url = format!("ws://127.0.0.1:{port}/ws?room={room_id}");
+                    let host_client_id = {
+                        let state = app.state::<AppState>();
+                        let doc = state.document.lock().unwrap();
+                        doc.client_id.value
+                    };
+                    let local_ws_url = format!(
+                        "ws://127.0.0.1:{port}/ws?room={room_id}&client_id={host_client_id}"
+                    );
                     let ws = app.state::<WsState>();
-                    match ws.connect(&ws_url, room_id.clone()).await {
-                        Err(e) => {
-                            eprintln!("[ws] local connection failed (session still running): {e}")
-                        }
-                        Ok(()) => {
-                            let test_msg = format!(
-                                r#"{{"type":"ping","room":"{room_id}","client_id":"tauri-host"}}"#
-                            );
-                            if let Err(e) = ws
-                                .send(tokio_tungstenite::tungstenite::Message::Text(
-                                    test_msg.into(),
-                                ))
-                                .await
-                            {
-                                eprintln!("[ws] test send failed: {e}");
-                            }
-                        }
+                    if let Err(e) = ws.connect(&local_ws_url, room_id.clone()).await {
+                        eprintln!("[ws] local connection failed (session still running): {e}");
                     }
                     return;
                 }
@@ -195,6 +185,62 @@ fn store_public_url(app: &AppHandle, url: &str) {
     {
         *stored = Some(url.to_string());
     }
+}
+
+const FETCH_ROOM_TIMEOUT: Duration = Duration::from_secs(5);
+
+async fn fetch_room_id(port: u16) -> Result<String, String> {
+    tokio::time::timeout(FETCH_ROOM_TIMEOUT, fetch_room_id_inner(port))
+        .await
+        .map_err(|_| {
+            format!(
+                "gateway /rooms: timed out after {}s",
+                FETCH_ROOM_TIMEOUT.as_secs()
+            )
+        })?
+}
+
+async fn fetch_room_id_inner(port: u16) -> Result<String, String> {
+    let response = gateway_http_post_empty(port, "/rooms").await?;
+    parse_room_id_response(&response)
+}
+
+async fn gateway_http_post_empty(port: u16, path: &str) -> Result<Vec<u8>, String> {
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .map_err(|e| format!("connect gateway {path}: {e}"))?;
+
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .map_err(|e| format!("write {path}: {e}"))?;
+
+    let mut buf = Vec::with_capacity(256);
+    stream
+        .read_to_end(&mut buf)
+        .await
+        .map_err(|e| format!("read {path}: {e}"))?;
+    Ok(buf)
+}
+
+fn parse_room_id_response(response: &[u8]) -> Result<String, String> {
+    let text = String::from_utf8_lossy(response);
+    let body_idx = text
+        .find("\r\n\r\n")
+        .ok_or_else(|| "gateway /rooms: malformed response (no body)".to_string())?
+        + 4;
+    let body = text[body_idx..].trim();
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("gateway /rooms: invalid JSON: {e}"))?;
+    parsed
+        .get("room_id")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .ok_or_else(|| "gateway /rooms: response missing room_id".to_string())
 }
 
 async fn pipe_gateway_logs(mut rx: tokio::sync::mpsc::Receiver<CommandEvent>) {

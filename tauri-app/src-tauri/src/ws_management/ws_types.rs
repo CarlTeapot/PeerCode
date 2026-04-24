@@ -27,7 +27,6 @@ pub enum WsError {
     Timeout { url: String, secs: u64 },
     Handshake { url: String, cause: String },
     NotConnected,
-    SendFailed(String),
     Cancelled,
 }
 
@@ -44,7 +43,6 @@ impl Display for WsError {
                 write!(f, "WebSocket connect to {url} failed: {cause}")
             }
             WsError::NotConnected => write!(f, "WebSocket is not connected"),
-            WsError::SendFailed(e) => write!(f, "WebSocket send failed: {e}"),
             WsError::Cancelled => write!(f, "WebSocket connection cancelled before handshake"),
         }
     }

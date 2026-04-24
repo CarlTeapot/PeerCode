@@ -96,15 +96,4 @@ impl WsState {
             _ => Err(WsError::NotConnected),
         }
     }
-
-    pub async fn send(&self, msg: Message) -> Result<(), WsError> {
-        let arc = {
-            let guard = self.write_tx.read().unwrap();
-            guard.as_ref().ok_or(WsError::NotConnected)?.clone()
-        };
-
-        arc.send(msg)
-            .await
-            .map_err(|_| WsError::SendFailed("writer task has exited".into()))
-    }
 }
