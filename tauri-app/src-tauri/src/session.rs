@@ -50,7 +50,7 @@ pub fn start_host_session(app: AppHandle) -> Result<(), String> {
         *role = AppRole::Starting;
     }
 
-    tunnel::launch(app, tunnel::generate_room_id());
+    tunnel::launch(app);
     Ok(())
 }
 

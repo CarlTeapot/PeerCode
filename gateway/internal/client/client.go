@@ -1,28 +1,72 @@
 package client
 
-// Client represents a single connected WebSocket peer.
-//
-// Responsibilities:
-//   - Own the websocket.Conn
-//   - reads frames from the wire, decodes them
-//     into protocol.Message, forwards to the Room's ops channel
-//   - drains the send channel, writes frames to the wire
-//   - Handle graceful disconnect: close send channel → writePump exits →
-//     connection closed → Room is notified via leave channel
-//
-// A Client never talks to other Clients directly.
-// All cross-client communication goes through the Room's fan-out channel.
-//
-// The send channel is buffered (e.g. 256 messages).
-// If it fills up (slow reader), the client is dropped — no backpressure
-// allowed to stall the fan-out goroutine.
-//
-// Fields:
-//   ID       string            — unique per connection (uuid or random hex)
-//   RoomID   string            — which room this client belongs to
-//   IsHost   bool              — true if this client created the room
-//   conn     *websocket.Conn
-//   send     chan []byte        — outbound frame queue
-//   room     *room.Room        — back-reference for leave notification
+import (
+	"context"
 
-type Client struct{}
+	"github.com/coder/websocket"
+)
+
+const sendBufferSize = 256
+
+type Client struct {
+	ID     string
+	RoomID string
+	conn   *websocket.Conn
+	send   chan []byte
+}
+
+func New(id, roomID string, conn *websocket.Conn) *Client {
+	return &Client{
+		ID:     id,
+		RoomID: roomID,
+		conn:   conn,
+		send:   make(chan []byte, sendBufferSize),
+	}
+}
+
+func (c *Client) CloseSend() {
+	close(c.send)
+}
+
+// reads frames from the websocket and pushes each payload onto
+func (c *Client) ReadPump(ctx context.Context, ops chan<- []byte, leave chan<- *Client) {
+	defer func() {
+		select {
+		case leave <- c:
+		case <-ctx.Done():
+		}
+	}()
+
+	for {
+		_, data, err := c.conn.Read(ctx)
+		if err != nil {
+			return
+		}
+		select {
+		case ops <- data:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// drains the send channel to the websocket until it is closed
+func (c *Client) WritePump(ctx context.Context) {
+	defer func() {
+		_ = c.conn.Close(websocket.StatusNormalClosure, "")
+	}()
+
+	for {
+		select {
+		case msg, ok := <-c.send:
+			if !ok {
+				return
+			}
+			if err := c.conn.Write(ctx, websocket.MessageBinary, msg); err != nil {
+				return
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
