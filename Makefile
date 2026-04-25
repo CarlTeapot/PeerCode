@@ -96,9 +96,11 @@ $(GATEWAY_BIN): $(GATEWAY_INPUTS)
 
 build-gateway: $(GATEWAY_BIN)
 
-# run development servers for Tauri app
+PORT ?= 1420
+
+# run development servers for Tauri app (optionally: make dev PORT=1430)
 dev: $(GATEWAY_BIN)
-	cd tauri-app && npm run tauri:dev
+	cd tauri-app && VITE_PORT=$(PORT) npx tauri dev --config '{"build":{"devUrl":"http://localhost:$(PORT)"}}'
 
 $(FRONTEND_BUILD_OUT): $(FRONTEND_BUILD_INPUTS)
 	cd tauri-app && npm run build

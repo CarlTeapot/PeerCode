@@ -63,7 +63,9 @@ export function SessionSetupModal({ onDone }: SessionSetupModalProps) {
               Host a new collaborative session or join an existing one.
             </div>
             <button style={btnStyle(busy)} disabled={busy} onClick={handleHost}>
-              {busy ? "starting…" : "Host a session"}
+              {busy
+                ? "starting…"
+                : "Host a session"}
             </button>
             <button
               style={{

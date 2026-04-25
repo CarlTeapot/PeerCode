@@ -1,11 +1,15 @@
-use crate::processes::types::{GatewayWorkflowResult, RoomResponse};
+use crate::processes::types::GatewayWorkflowResult;
 use crate::state::appstate::{AppRole, AppState};
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc::Receiver;
+
+#[derive(serde::Deserialize)]
+struct RoomResponse {
+    room_id: String,
+}
 
 pub async fn run_gateway(app: &AppHandle) -> Result<Option<GatewayWorkflowResult>, String> {
     let (mut rx, child) = app
@@ -58,9 +62,7 @@ async fn on_gateway_ready(
     room_id: &str,
     log_rx: Receiver<CommandEvent>,
 ) -> Option<GatewayWorkflowResult> {
-    let lan_url = get_lan_url(port, room_id)
-        .await
-        .expect("LAN URL cannot be null");
+    let lan_url = get_lan_url(port, room_id).await;
 
     {
         let state = app.state::<AppState>();
@@ -70,7 +72,7 @@ async fn on_gateway_ready(
         }
         *role = AppRole::Host {
             room_id: room_id.to_string(),
-            lan_url: Some(lan_url.clone()),
+            lan_url: lan_url.clone(),
             public_url: None,
         };
     }
@@ -90,9 +92,9 @@ async fn get_lan_url(port: u16, room_id: &str) -> Option<String> {
             .ok()
             .map(|ip| format!("ws://{}:{}/ws?room={}", ip, port, room_id))
     })
-        .await
-        .ok()
-        .flatten()
+    .await
+    .ok()
+    .flatten()
 }
 
 const FETCH_ROOM_TIMEOUT: Duration = Duration::from_secs(5);

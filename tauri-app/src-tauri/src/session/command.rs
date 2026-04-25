@@ -1,43 +1,10 @@
+use crate::session::session_types::{
+    JoinInfo, SessionInfo,
+};
 use crate::processes::process_coordinator;
 use crate::state::appstate::{AppRole, AppState};
 use crate::state::ws_state::WsState;
 use tauri::{AppHandle, Manager, State};
-
-pub const GATEWAY_READY: &str = "session://gateway-ready";
-pub const TUNNEL_READY: &str = "session://tunnel-ready";
-pub const SESSION_ERROR: &str = "session://session-error";
-
-#[derive(Clone, serde::Serialize)]
-pub struct GatewayReadyPayload {
-    pub lan_url: Option<String>,
-    pub room_id: String,
-    pub port: u16,
-}
-
-#[derive(Clone, serde::Serialize)]
-pub struct TunnelReadyPayload {
-    pub public_url: String,
-    pub room_id: String,
-}
-
-#[derive(Clone, serde::Serialize)]
-pub struct SessionErrorPayload {
-    pub message: String,
-}
-
-#[derive(serde::Serialize)]
-pub struct SessionInfo {
-    pub status: String,
-    pub lan_url: Option<String>,
-    pub public_url: Option<String>,
-    pub room_id: Option<String>,
-}
-
-#[derive(serde::Serialize)]
-pub struct JoinInfo {
-    pub server_url: String,
-    pub room_id: String,
-}
 
 #[tauri::command]
 pub async fn start_host_session(app: AppHandle) -> Result<(), String> {
@@ -50,9 +17,9 @@ pub async fn start_host_session(app: AppHandle) -> Result<(), String> {
         *role = AppRole::Starting;
     }
 
-    let (port, room_id) = process_coordinator::launch(app.clone()).await?;
+    let result = process_coordinator::launch(app.clone()).await?;
 
-    connect(app, port, room_id).await;
+    connect(app, result.port, result.room_id).await;
     Ok(())
 }
 
@@ -62,6 +29,7 @@ pub async fn join_session(
     state: State<'_, AppState>,
     ws: State<'_, WsState>,
 ) -> Result<(), String> {
+    println!("{:#?}", url);
     let join_info = parse_join_url(url)?;
 
     {
@@ -72,7 +40,15 @@ pub async fn join_session(
         *role = AppRole::Starting;
     }
 
-    let ws_url = format!("{}/ws?room={}", join_info.server_url, join_info.room_id);
+    let guest_client_id = {
+        let doc = state.document.lock().unwrap();
+        doc.client_id.value
+    };
+
+    let ws_url = format!(
+        "{}/ws?room={}&client_id={}",
+        join_info.server_url, join_info.room_id, guest_client_id
+    );
 
     ws.connect(&ws_url, join_info.room_id.clone())
         .await
@@ -81,7 +57,10 @@ pub async fn join_session(
             e.to_string()
         })?;
 
-    *state.role.lock().unwrap() = AppRole::Guest {};
+    *state.role.lock().unwrap() = AppRole::Guest {
+        room_id: join_info.room_id.clone(),
+        server_url: join_info.server_url.clone(),
+    };
 
     Ok(())
 }
@@ -107,6 +86,14 @@ pub fn get_session_info(state: State<'_, AppState>) -> SessionInfo {
             public_url,
             ..
         } => (lan_url.clone(), public_url.clone(), Some(room_id.clone())),
+        AppRole::Guest {
+            room_id,
+            server_url,
+        } => (
+            None,
+            Some(server_url.clone()),
+            Some(room_id.clone()),
+        ),
         _ => (None, None, None),
     };
     SessionInfo {

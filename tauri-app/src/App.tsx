@@ -56,26 +56,27 @@ function AppContent({ username }: AppContentProps) {
     const unlisten: (() => void)[] = [];
     (async () => {
       unlisten.push(
-        await listen<{ lan_url: string | null; port: number; room_id: string }>(
-          "session://gateway-ready",
+        await listen<{
+          lan_url: string | null;
+          public_url: string | null;
+          port: number;
+          room_id: string;
+        }>(
+          "session://session-ready",
           (e) => {
             setSessionStatus("host");
             if (e.payload.lan_url) setLanUrl(e.payload.lan_url);
+            if (e.payload.public_url) setPublicUrl(e.payload.public_url);
           },
         ),
       );
       unlisten.push(
-        await listen<{ public_url: string; room_id: string }>(
-          "session://tunnel-ready",
+        await listen<{ message: string }>(
+          "session://session-error",
           (e) => {
-            setPublicUrl(e.payload.public_url);
+            setSessionStatus("error: " + e.payload.message);
           },
         ),
-      );
-      unlisten.push(
-        await listen<{ message: string }>("session://session-error", (e) => {
-          setSessionStatus("error: " + e.payload.message);
-        }),
       );
     })();
 
@@ -219,7 +220,7 @@ function AppContent({ username }: AppContentProps) {
         )}
         {!lanUrl && !publicUrl && sessionStatus === "starting..." && (
           <span style={{ color: "#888", marginLeft: 8 }}>
-            waiting for gateway and tunnel...
+            waiting for session readiness...
           </span>
         )}
       </div>

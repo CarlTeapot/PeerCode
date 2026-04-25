@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-const RAW_CONFIG: &str = include_str!("../peercode.config.toml");
+const RAW_CONFIG: &str = include_str!("../../peercode.config.toml");
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppConfig {
@@ -29,6 +29,6 @@ impl WebsocketConfig {
 
 impl AppConfig {
     pub fn load() -> Self {
-        toml::from_str(RAW_CONFIG).expect("invalid peercode.config.toml")
+        toml::from_str(RAW_CONFIG).expect("invalid peercode.app_config.toml")
     }
 }

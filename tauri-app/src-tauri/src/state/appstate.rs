@@ -20,7 +20,10 @@ pub enum AppRole {
         lan_url: Option<String>,
         public_url: Option<String>,
     },
-    Guest {},
+    Guest {
+        room_id: String,
+        server_url: String,
+    },
 }
 
 impl AppRole {

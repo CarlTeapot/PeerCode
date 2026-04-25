@@ -1,13 +1,14 @@
-mod config;
-mod crdt_handler;
+mod app_config;
+mod crdt;
 mod debug;
-mod identity;
 mod processes;
 mod session;
 mod state;
 mod ws_management;
 
-use crate::config::AppConfig;
+use crate::app_config::config::AppConfig;
+use crate::app_config::identity;
+use crate::crdt::crdt_handler;
 use crate::debug::document_logger::spawn_linked_list_logger;
 use crate::state::appstate::AppState;
 use crate::state::ws_state::WsState;
@@ -40,12 +41,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             crdt_handler::insert,
             crdt_handler::delete,
-            session::start_host_session,
-            session::stop_host_session,
-            session::join_session,
-            session::disconnect_websocket,
-            session::parse_join_url,
-            session::get_session_info,
+            session::command::start_host_session,
+            session::command::stop_host_session,
+            session::command::join_session,
+            session::command::disconnect_websocket,
+            session::command::parse_join_url,
+            session::command::get_session_info,
             identity::get_identity,
             identity::set_username,
             #[cfg(debug_assertions)]
