@@ -3,9 +3,7 @@ use crate::processes::error::emit_error;
 use crate::processes::gateway_process::run_gateway;
 use crate::processes::tunnel_process::run_cloudflared;
 use crate::processes::types::CombinedWorkflowResult;
-use crate::session::session_types::{
-    SessionReadyPayload, SESSION_READY,
-};
+use crate::session::session_types::{SessionReadyPayload, SESSION_READY};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::process::CommandEvent;
 use tokio::sync::mpsc::Receiver;

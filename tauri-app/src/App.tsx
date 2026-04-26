@@ -61,22 +61,16 @@ function AppContent({ username }: AppContentProps) {
           public_url: string | null;
           port: number;
           room_id: string;
-        }>(
-          "session://session-ready",
-          (e) => {
-            setSessionStatus("host");
-            if (e.payload.lan_url) setLanUrl(e.payload.lan_url);
-            if (e.payload.public_url) setPublicUrl(e.payload.public_url);
-          },
-        ),
+        }>("session://session-ready", (e) => {
+          setSessionStatus("host");
+          if (e.payload.lan_url) setLanUrl(e.payload.lan_url);
+          if (e.payload.public_url) setPublicUrl(e.payload.public_url);
+        }),
       );
       unlisten.push(
-        await listen<{ message: string }>(
-          "session://session-error",
-          (e) => {
-            setSessionStatus("error: " + e.payload.message);
-          },
-        ),
+        await listen<{ message: string }>("session://session-error", (e) => {
+          setSessionStatus("error: " + e.payload.message);
+        }),
       );
     })();
 

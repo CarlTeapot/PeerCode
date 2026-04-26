@@ -43,7 +43,6 @@ pub async fn run_cloudflared(
 
                 return Ok(Some(TunnelWorkflowResult {
                     public_url,
-                    room_id: room_id.to_string(),
                     log_rx: rx,
                 }));
             }

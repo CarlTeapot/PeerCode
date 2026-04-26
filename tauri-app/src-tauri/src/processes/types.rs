@@ -10,7 +10,6 @@ pub struct GatewayWorkflowResult {
 
 pub struct TunnelWorkflowResult {
     pub public_url: String,
-    pub room_id: String,
     pub log_rx: Receiver<CommandEvent>,
 }
 
