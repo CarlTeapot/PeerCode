@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import type React from "react";
+import { SessionSetupModal } from "./sessionSetup";
 
 const MAX_LEN = 32;
 
@@ -11,7 +13,7 @@ function sanitize(raw: string): string {
     .slice(0, MAX_LEN);
 }
 
-const overlayStyle: React.CSSProperties = {
+export const overlayStyle: React.CSSProperties = {
   position: "fixed",
   inset: 0,
   background: "rgba(0,0,0,0.75)",
@@ -21,7 +23,7 @@ const overlayStyle: React.CSSProperties = {
   zIndex: 9999,
 };
 
-const cardStyle: React.CSSProperties = {
+export const cardStyle: React.CSSProperties = {
   background: "#1e1e2e",
   border: "1px solid #444",
   borderRadius: 8,
@@ -34,7 +36,7 @@ const cardStyle: React.CSSProperties = {
   fontFamily: "monospace",
 };
 
-const inputStyle: React.CSSProperties = {
+export const inputStyle: React.CSSProperties = {
   background: "#12121f",
   border: "1px solid #555",
   borderRadius: 4,
@@ -46,7 +48,7 @@ const inputStyle: React.CSSProperties = {
   boxSizing: "border-box",
 };
 
-const btnStyle = (disabled: boolean): React.CSSProperties => ({
+export const btnStyle = (disabled: boolean): React.CSSProperties => ({
   background: disabled ? "#333" : "#4a7fd4",
   border: "none",
   borderRadius: 4,
@@ -58,7 +60,7 @@ const btnStyle = (disabled: boolean): React.CSSProperties => ({
   width: "100%",
 });
 
-const errorStyle: React.CSSProperties = {
+export const errorStyle: React.CSSProperties = {
   color: "#f77",
   fontSize: 12,
   minHeight: 16,
@@ -71,6 +73,7 @@ interface UsernameGateProps {
 export function UsernameGate({ children }: UsernameGateProps) {
   // null = still checking; "" = checked, no username yet; string = ready
   const [username, setUsername] = useState<string | null>(null);
+  const [sessionReady, setSessionReady] = useState(false);
 
   useEffect(() => {
     invoke<{ username: string | null }>("get_identity")
@@ -80,6 +83,8 @@ export function UsernameGate({ children }: UsernameGateProps) {
 
   if (username === null) return null;
   if (username === "") return <FirstRunModal onDone={setUsername} />;
+  if (!sessionReady)
+    return <SessionSetupModal onDone={() => setSessionReady(true)} />;
   return <>{children(username)}</>;
 }
 
