@@ -43,8 +43,8 @@ func TestRoom_SendToEmptyIsNoop(t *testing.T) {
 	a := client.New("a", "room-2", nil)
 	r.Join(a)
 
-	r.Ops() <- []byte{0x00, 0xDE, 0xAD}
-	r.Ops() <- []byte{}
+	r.Ops() <- BroadcastMsg{Sender: a, Data: []byte{0x00, 0xDE, 0xAD}}
+	r.Ops() <- BroadcastMsg{Sender: a, Data: []byte{}}
 
 	r.Leave(a, nil)
 	select {
