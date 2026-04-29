@@ -1,12 +1,18 @@
 package room
 
 import (
+	"log"
 	"sync"
 
 	"gateway/internal/client"
 )
 
 const opsBufferSize = 256
+
+type BroadcastMsg struct {
+	Sender *client.Client
+	Data   []byte
+}
 
 type Room struct {
 	ID string
@@ -15,7 +21,7 @@ type Room struct {
 	clients map[*client.Client]struct{}
 	closed  bool
 
-	ops  chan []byte
+	ops  chan BroadcastMsg
 	done chan struct{}
 }
 
@@ -23,7 +29,7 @@ func New(id string) *Room {
 	return &Room{
 		ID:      id,
 		clients: make(map[*client.Client]struct{}),
-		ops:     make(chan []byte, opsBufferSize),
+		ops:     make(chan BroadcastMsg, opsBufferSize),
 		done:    make(chan struct{}),
 	}
 }
@@ -58,7 +64,7 @@ func (r *Room) Leave(c *client.Client, onEmpty func()) {
 	}
 }
 
-func (r *Room) Ops() chan<- []byte { return r.ops }
+func (r *Room) Ops() chan<- BroadcastMsg { return r.ops }
 
 func (r *Room) Size() int {
 	r.mu.Lock()
@@ -71,9 +77,22 @@ func (r *Room) Run() {
 		select {
 		case <-r.done:
 			return
-		case payload := <-r.ops:
-			// TODO(T04): fan out to every client except sender
-			_ = payload
+		case msg := <-r.ops:
+			r.mu.Lock()
+			targets := make([]*client.Client, 0, len(r.clients))
+			for c := range r.clients {
+				if c != msg.Sender {
+					targets = append(targets, c)
+				}
+			}
+			r.mu.Unlock()
+
+			for _, c := range targets {
+				if !c.Send(msg.Data) {
+					log.Printf("[room] %s: disconnecting slow client %s", r.ID, c.ID)
+					c.ForceClose()
+				}
+			}
 		}
 	}
 }
