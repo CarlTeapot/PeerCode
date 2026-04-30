@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -186,5 +187,121 @@ func TestHub_ConcurrentJoinsSameRoom(t *testing.T) {
 	}
 	if rooms := h.Rooms(); len(rooms) != 1 || rooms[0] != "race" {
 		t.Fatalf("Rooms=%v, want [race]", rooms)
+	}
+}
+
+func TestHub_FanOut_SenderExcluded(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	a := dial(t, wsURL(srv.URL, "fanout", "mate"))
+	defer a.Close(websocket.StatusNormalClosure, "")
+	b := dial(t, wsURL(srv.URL, "fanout", "gendi"))
+	defer b.Close(websocket.StatusNormalClosure, "")
+
+	time.Sleep(50 * time.Millisecond)
+
+	ctx := context.Background()
+	payload := wire.EncodeOpFrame([]byte("hello"))
+	if err := a.Write(ctx, websocket.MessageBinary, payload); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	readCtx, readCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer readCancel()
+	_, data, err := b.Read(readCtx)
+	if err != nil {
+		t.Fatalf("gendi read: %v", err)
+	}
+	if !bytes.Equal(data, payload) {
+		t.Fatalf("gendi got %x, want %x", data, payload)
+	}
+
+	noEchoCtx, noEchoCancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	defer noEchoCancel()
+	_, _, err = a.Read(noEchoCtx)
+	if err == nil {
+		t.Fatal("mate received echo")
+	}
+}
+
+func TestHub_FanOut_ThreeClients(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	a := dial(t, wsURL(srv.URL, "trio", "mate"))
+	defer a.Close(websocket.StatusNormalClosure, "")
+	b := dial(t, wsURL(srv.URL, "trio", "gendi"))
+	defer b.Close(websocket.StatusNormalClosure, "")
+	c := dial(t, wsURL(srv.URL, "trio", "gela"))
+	defer c.Close(websocket.StatusNormalClosure, "")
+
+	time.Sleep(50 * time.Millisecond)
+
+	ctx := context.Background()
+	payload := wire.EncodeOpFrame([]byte("broadcast"))
+	if err := a.Write(ctx, websocket.MessageBinary, payload); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	for _, pair := range []struct {
+		name string
+		conn *websocket.Conn
+	}{{"gendi", b}, {"gela", c}} {
+		readCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		_, data, err := pair.conn.Read(readCtx)
+		cancel()
+		if err != nil {
+			t.Fatalf("%s read: %v", pair.name, err)
+		}
+		if !bytes.Equal(data, payload) {
+			t.Fatalf("%s got %x, want %x", pair.name, data, payload)
+		}
+	}
+
+	noEchoCtx, noEchoCancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	defer noEchoCancel()
+	_, _, err := a.Read(noEchoCtx)
+	if err == nil {
+		t.Fatal("mate received echo")
+	}
+}
+
+func BenchmarkHub_FanOut_1000Ops(b *testing.B) {
+	h := New()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ws", h.HandleWS)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	ctx := context.Background()
+
+	sender, _, err := websocket.Dial(ctx, wsURL(srv.URL, "bench", "sender"), nil)
+	if err != nil {
+		b.Fatalf("dial sender: %v", err)
+	}
+	defer sender.Close(websocket.StatusNormalClosure, "")
+
+	receiver, _, err := websocket.Dial(ctx, wsURL(srv.URL, "bench", "receiver"), nil)
+	if err != nil {
+		b.Fatalf("dial receiver: %v", err)
+	}
+	defer receiver.Close(websocket.StatusNormalClosure, "")
+
+	time.Sleep(50 * time.Millisecond)
+
+	payload := wire.EncodeOpFrame([]byte("op"))
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for j := 0; j < 1000; j++ {
+			if err := sender.Write(ctx, websocket.MessageBinary, payload); err != nil {
+				b.Fatalf("write: %v", err)
+			}
+			readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			_, _, err := receiver.Read(readCtx)
+			cancel()
+			if err != nil {
+				b.Fatalf("read: %v", err)
+			}
+		}
 	}
 }

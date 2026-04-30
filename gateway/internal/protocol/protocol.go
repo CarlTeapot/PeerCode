@@ -35,4 +35,10 @@ const (
 	MsgPong     = "pong"
 )
 
-type Message struct{}
+type Message struct {
+	Type     string `json:"type"`
+	Room     string `json:"room"`
+	ClientID string `json:"client_id"`
+	Seq      uint64 `json:"seq"`
+	Payload  string `json:"payload"`
+}

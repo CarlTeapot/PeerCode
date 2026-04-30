@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -92,19 +93,26 @@ func readWSParams(w http.ResponseWriter, r *http.Request) (roomID, clientID stri
 	return roomID, clientID, true
 }
 
-func dispatchFrame(rm *room.Room, raw []byte, roomID, clientID string) {
-	payload, err := wire.DecodeOpFrame(raw)
-	if err != nil {
-		log.Printf("[gateway] drop frame room=%s client=%s: %v", roomID, clientID, err)
+func dispatchFrame(rm *room.Room, sender *client.Client, raw []byte) {
+	if _, err := wire.DecodeOpFrame(raw); err != nil {
+		log.Printf("[gateway] drop frame room=%s client=%s: %v", sender.RoomID, sender.ID, err)
 		return
 	}
-	// TODO(T04): replace the silent drop with either back-pressure
-	// (block with a short timeout) or disconnecting the slow peer.
-	// Dropping ops silently diverges CRDT state on the recipients.
+
+	msg := room.BroadcastMsg{Sender: sender, Data: raw}
+
 	select {
-	case rm.Ops() <- payload:
+	case rm.Ops() <- msg:
+		return
 	default:
-		log.Printf("[gateway] ops buffer full room=%s; dropping frame", roomID)
+	}
+
+	t := time.NewTimer(100 * time.Millisecond)
+	defer t.Stop()
+	select {
+	case rm.Ops() <- msg:
+	case <-t.C:
+		log.Printf("[gateway] ops buffer full room=%s client=%s; dropping frame", sender.RoomID, sender.ID)
 	}
 }
 
@@ -140,7 +148,7 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case raw := <-ops:
-			dispatchFrame(rm, raw, roomID, clientID)
+			dispatchFrame(rm, c, raw)
 		case <-leave:
 			return
 		case <-ctx.Done():

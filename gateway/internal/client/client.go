@@ -28,6 +28,28 @@ func (c *Client) CloseSend() {
 	close(c.send)
 }
 
+// returns false without blocking if the send buffer is full
+func (c *Client) Send(data []byte) (ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	select {
+	case c.send <- data:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *Client) ForceClose() {
+	if c.conn == nil {
+		return
+	}
+	go c.conn.Close(websocket.StatusPolicyViolation, "slow consumer")
+}
+
 // reads frames from the websocket and pushes each payload onto
 func (c *Client) ReadPump(ctx context.Context, ops chan<- []byte, leave chan<- *Client) {
 	defer func() {
