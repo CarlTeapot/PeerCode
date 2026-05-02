@@ -1,16 +1,8 @@
-.PHONY: help install install-linux-deps install-audit-tools dev prod prod-build prod-run dev-gateway build-gateway build test lint format clean \
-        format-all lint-all test-all check reset-identity \
-        audit-frontend audit-crdt audit-tauri audit-go audit-all
+.PHONY: help install install-linux-deps clean reset-identity
 
-FRONTEND_BUILD_OUT := tauri-app/dist/index.html
-FRONTEND_BUILD_INPUTS := $(shell git ls-files tauri-app/src) tauri-app/index.html tauri-app/vite.config.ts tauri-app/package.json tauri-app/package-lock.json tauri-app/.env.production
-
-RUST_RELEASE_BIN := tauri-app/src-tauri/target/release/tauri-app
-RUST_RELEASE_INPUTS := $(shell git ls-files tauri-app/src-tauri/src crdt-core/src) tauri-app/src-tauri/Cargo.toml tauri-app/src-tauri/Cargo.lock crdt-core/Cargo.toml
-
-TARGET_TRIPLE := $(shell rustc -vV | sed -n 's|host: ||p')
-GATEWAY_BIN := tauri-app/src-tauri/binaries/peercode-gateway-$(TARGET_TRIPLE)
-GATEWAY_INPUTS := $(shell git ls-files gateway/)
+include build/make/build.mk
+include build/make/test.mk
+include build/make/fmt-lint.mk
 
 install-linux-deps:
 	sudo apt-get update
@@ -20,114 +12,7 @@ install-linux-deps:
 install:
 	cd tauri-app && npm install
 
-# install security audit tools (cargo-audit, govulncheck)
-install-audit-tools:
-	cargo install cargo-audit
-	go install golang.org/x/vuln/cmd/govulncheck@latest
-
-
-# ------------- formatting -------------- 
-format-crdt:
-	cd crdt-core && cargo fmt
-
-format-tauri:
-	cd tauri-app/src-tauri && cargo fmt
-
-format-go:
-	cd gateway && go fmt ./...
-
-format-frontend:
-	cd tauri-app && npx prettier --write "src/**/*.{ts,tsx,css}"
-
-format-all: format-crdt format-tauri format-go format-frontend
-
-
-# -------------linting ---------------
-lint-frontend:
-	cd tauri-app && npm run lint
-
-lint-crdt:
-	cd crdt-core && cargo clippy --all-targets --all-features -- -D warnings
-
-lint-tauri:
-	cd tauri-app/src-tauri && cargo clippy --all-targets --all-features
-
-lint-go:
-	cd gateway && go vet ./...
-
-lint-all: lint-frontend lint-crdt lint-tauri lint-go
-
-check: format-all lint-all
-
-
-# ------------- testing ---------------
-test-crdt:
-	cd crdt-core && cargo test
-
-test-tauri:
-	cd tauri-app/src-tauri && cargo test
-
-test-go:
-	cd gateway && go test -v ./...
-
-test-all: test-crdt test-tauri test-go
-
-
-# ------------- security audit ---------------
-audit-frontend:
-	cd tauri-app && npm audit --audit-level=high
-
-audit-crdt:
-	cd crdt-core && cargo generate-lockfile && cargo audit
-
-audit-tauri:
-	cd tauri-app/src-tauri && cargo generate-lockfile && cargo audit
-
-audit-go:
-	cd gateway && govulncheck ./...
-
-audit-all: audit-frontend audit-crdt audit-tauri audit-go
-
-
-# ------------- development ---------------
-
-$(GATEWAY_BIN): $(GATEWAY_INPUTS)
-	cd gateway && go build -o ../$(GATEWAY_BIN) ./cmd/server/
-
-build-gateway: $(GATEWAY_BIN)
-
-PORT ?= 1420
-
-# run development servers for Tauri app (optionally: make dev PORT=1430)
-dev: $(GATEWAY_BIN)
-	cd tauri-app && VITE_PORT=$(PORT) npx tauri dev --config '{"build":{"devUrl":"http://localhost:$(PORT)"}}'
-
-$(FRONTEND_BUILD_OUT): $(FRONTEND_BUILD_INPUTS)
-	cd tauri-app && npm run build
-
-$(RUST_RELEASE_BIN): $(RUST_RELEASE_INPUTS)
-	cd tauri-app && npm run tauri build -- --no-bundle
-
-prod-build: $(GATEWAY_BIN) $(FRONTEND_BUILD_OUT) $(RUST_RELEASE_BIN)
-
-prod-run: $(RUST_RELEASE_BIN)
-	cd tauri-app/src-tauri && ./target/release/tauri-app
-
-# run production build/runtime for Tauri app (rebuilds only when needed)
-prod: prod-build prod-run
-
-# run development server for Go Gateway
-dev-gateway:
-	cd gateway && go run main.go
-
-# build whole app
-build:
-	cd gateway && go build -o bin/gateway main.go
-	cd tauri-app && npm run build
-	cd tauri-app && npm run tauri build
-
 # delete the persisted username so the first-run prompt appears again on next launch
-# path follows XDG_DATA_HOME (defaults to ~/.local/share) + the app identifier
 reset-identity:
 	rm -f "$${XDG_DATA_HOME:-$$HOME/.local/share}/tauri-app/identity.toml"
 
