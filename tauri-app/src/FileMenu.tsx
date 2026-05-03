@@ -38,14 +38,18 @@ export function FileMenu({ onDocumentLoaded }: FileMenuProps) {
     try {
       const list = await invoke<DocumentMeta[]>("list_saved_documents");
       setDocs(list);
-    } catch {}
+    } catch {
+      // linter doesn't like empty catches :(
+    }
   }, []);
 
   const refreshCurrentName = useCallback(async () => {
     try {
       const name = await invoke<string | null>("get_current_document_name");
       setCurrentName(name);
-    } catch {}
+    } catch {
+      // linter doesn't like empty catches :(
+    }
   }, []);
 
   const toggleMenu = useCallback(async () => {
