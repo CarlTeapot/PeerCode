@@ -39,6 +39,7 @@ pub fn run() {
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             crdt_handler::insert,
             crdt_handler::delete,
@@ -55,6 +56,9 @@ pub fn run() {
             persistence::commands::list_saved_documents,
             persistence::commands::fork_document,
             persistence::commands::delete_document,
+            persistence::commands::get_document_text,
+            persistence::commands::get_current_document_name,
+            persistence::commands::save_text_file,
             #[cfg(debug_assertions)]
             crdt_handler::toggle_crdt_logging
         ])

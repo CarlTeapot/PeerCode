@@ -83,3 +83,19 @@ pub fn delete_document(app: AppHandle, name: String) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[tauri::command]
+pub fn get_document_text(state: State<'_, AppState>) -> Result<String, String> {
+    let doc = state.document.lock().unwrap();
+    Ok(doc.get_text())
+}
+
+#[tauri::command]
+pub fn get_current_document_name(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    Ok(state.current_document_name.lock().unwrap().clone())
+}
+
+#[tauri::command]
+pub fn save_text_file(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, &content).map_err(|e| e.to_string())
+}

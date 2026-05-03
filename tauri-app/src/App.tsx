@@ -1,9 +1,10 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import type { editor } from "monaco-editor";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { UsernameGate } from "./usernameSetup";
+import { FileMenu } from "./FileMenu";
 import "./App.css";
 
 interface LogEntry {
@@ -22,6 +23,19 @@ function AppContent({ username }: AppContentProps) {
   const [eventLog, setEventLog] = useState<LogEntry[]>([]);
   const eventCountRef = useRef(0);
   const logRef = useRef<HTMLDivElement>(null);
+  const editorInstanceRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+
+  const handleDocumentLoaded = useCallback((text: string, name: string) => {
+    const ed = editorInstanceRef.current;
+    if (ed) {
+      ed.setValue(text);
+    }
+    const count = ++eventCountRef.current;
+    const html =
+      `<span class="label">#${count}</span>` +
+      `<span class="op-insert">[loaded]</span> document "${name}" (${text.length} chars)`;
+    setEventLog((prev) => [...prev, { id: count, html }]);
+  }, []);
 
   useEffect(() => {
     if (logRef.current) {
@@ -86,6 +100,7 @@ function AppContent({ username }: AppContentProps) {
   };
 
   const handleEditorMount: OnMount = (editor) => {
+    editorInstanceRef.current = editor;
     setStatus("editor ready");
     setStatusReady(true);
 
@@ -152,6 +167,7 @@ function AppContent({ username }: AppContentProps) {
   return (
     <>
       <div className="toolbar">
+        <FileMenu onDocumentLoaded={handleDocumentLoaded} />
         <span>Monaco Test Harness</span>
         {username && (
           <span
