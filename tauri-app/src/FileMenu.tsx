@@ -38,16 +38,14 @@ export function FileMenu({ onDocumentLoaded }: FileMenuProps) {
     try {
       const list = await invoke<DocumentMeta[]>("list_saved_documents");
       setDocs(list);
-    } catch {
-    }
+    } catch {}
   }, []);
 
   const refreshCurrentName = useCallback(async () => {
     try {
       const name = await invoke<string | null>("get_current_document_name");
       setCurrentName(name);
-    } catch {
-    }
+    } catch {}
   }, []);
 
   const toggleMenu = useCallback(async () => {
