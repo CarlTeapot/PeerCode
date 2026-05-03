@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use log::{debug, info, warn};
+use tauri::AppHandle;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::timeout;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -30,7 +31,12 @@ impl WsState {
         }
     }
 
-    pub async fn connect(&self, url: &str, session_id: String) -> Result<(), WsError> {
+    pub async fn connect(
+        &self,
+        url: &str,
+        session_id: String,
+        app: AppHandle,
+    ) -> Result<(), WsError> {
         debug!("starting ws connection request: url={url} session_id={session_id}");
         {
             let mut guard = self.connection.lock().await;
@@ -78,6 +84,7 @@ impl WsState {
             stream,
             Arc::clone(&self.connection),
             Arc::clone(&self.write_tx),
+            app,
         ));
         debug!("ws sender/receiver tasks spawned");
 
@@ -97,6 +104,23 @@ impl WsState {
 
         info!("websocket connected: url={url} room={session_id}");
         Ok(())
+    }
+
+    pub async fn send_raw(&self, bytes: Vec<u8>) {
+        let tx = {
+            let guard = self.write_tx.read().unwrap();
+            guard.as_ref().map(Arc::clone)
+        };
+        match tx {
+            Some(tx) => {
+                if tx.send(Message::Binary(bytes.into())).await.is_err() {
+                    warn!("ws send_raw: writer channel closed; frame dropped");
+                }
+            }
+            None => {
+                warn!("ws send_raw: no active connection; frame dropped");
+            }
+        }
     }
 
     pub async fn disconnect(&self) -> Result<(), WsError> {

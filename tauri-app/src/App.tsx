@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from "react";
 import type { editor } from "monaco-editor";
-import Editor, { type OnMount } from "@monaco-editor/react";
+import Editor, { type OnMount, type Monaco } from "@monaco-editor/react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { useRemoteChangeListener } from "./remoteChangeListener";
 import { UsernameGate } from "./usernameSetup";
 import "./App.css";
 
@@ -23,6 +24,10 @@ function AppContent({ username }: AppContentProps) {
   const eventCountRef = useRef(0);
   const logRef = useRef<HTMLDivElement>(null);
 
+  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<Monaco | null>(null);
+  const isApplyingRemote = useRef(false);
+
   useEffect(() => {
     if (logRef.current) {
       logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -41,6 +46,18 @@ function AppContent({ username }: AppContentProps) {
   const [lanUrl, setLanUrl] = useState<string | null>(null);
   const [publicUrl, setPublicUrl] = useState<string | null>(null);
   const [sessionStatus, setSessionStatus] = useState<string>("starting...");
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
+
+  const copyUrl = async (label: string, url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopyStatus(`${label} URL copied`);
+      window.setTimeout(() => setCopyStatus(null), 1500);
+    } catch {
+      setCopyStatus(`Failed to copy ${label} URL`);
+      window.setTimeout(() => setCopyStatus(null), 1500);
+    }
+  };
 
   useEffect(() => {
     invoke<{
@@ -78,6 +95,14 @@ function AppContent({ username }: AppContentProps) {
   }, []);
   // --- end session links ---
 
+  useRemoteChangeListener({
+    editorRef,
+    monacoRef,
+    isApplyingRemote,
+    eventCountRef,
+    setEventLog,
+  });
+
   const [loggingEnabled, setLoggingEnabled] = useState(false);
   const toggleLogging = async () => {
     if (!isDevFeaturesEnabled) return;
@@ -85,12 +110,17 @@ function AppContent({ username }: AppContentProps) {
     setLoggingEnabled((prev) => !prev);
   };
 
-  const handleEditorMount: OnMount = (editor) => {
+  const handleEditorMount: OnMount = (editorInstance, monacoInstance) => {
+    editorRef.current = editorInstance;
+    monacoRef.current = monacoInstance;
     setStatus("editor ready");
     setStatusReady(true);
 
-    editor.onDidChangeModelContent(
+    editorInstance.onDidChangeModelContent(
       (event: editor.IModelContentChangedEvent) => {
+        // Skip changes that we ourselves applied from a remote peer.
+        if (isApplyingRemote.current) return;
+
         void (async () => {
           for (const change of event.changes) {
             const offset = change.rangeOffset;
@@ -201,16 +231,54 @@ function AppContent({ username }: AppContentProps) {
           {sessionStatus}
         </span>
         {lanUrl && (
-          <div style={{ marginTop: 4 }}>
+          <div
+            style={{
+              marginTop: 4,
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+            }}
+          >
             <span style={{ color: "#aaa" }}>LAN: </span>
             <span style={{ color: "#0ff" }}>{lanUrl}</span>
+            <button
+              onClick={() => void copyUrl("LAN", lanUrl)}
+              style={{
+                fontSize: 11,
+                padding: "1px 6px",
+                borderRadius: 3,
+                border: "1px solid #555",
+                background: "#2c2c3d",
+                color: "#ddd",
+                cursor: "pointer",
+              }}
+            >
+              Copy
+            </button>
           </div>
         )}
         {publicUrl && (
-          <div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <span style={{ color: "#aaa" }}>Public: </span>
             <span style={{ color: "#0ff" }}>{publicUrl}</span>
+            <button
+              onClick={() => void copyUrl("Public", publicUrl)}
+              style={{
+                fontSize: 11,
+                padding: "1px 6px",
+                borderRadius: 3,
+                border: "1px solid #555",
+                background: "#2c2c3d",
+                color: "#ddd",
+                cursor: "pointer",
+              }}
+            >
+              Copy
+            </button>
           </div>
+        )}
+        {copyStatus && (
+          <div style={{ color: "#9ad", marginTop: 4 }}>{copyStatus}</div>
         )}
         {!lanUrl && !publicUrl && sessionStatus === "starting..." && (
           <span style={{ color: "#888", marginLeft: 8 }}>

@@ -1,4 +1,6 @@
+use crdt_core::RemoteChange;
 use futures_util::stream::{SplitSink, SplitStream};
+use serde::Serialize;
 use std::fmt::Display;
 use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
@@ -19,6 +21,26 @@ pub enum WsConnection {
         #[allow(dead_code)]
         sender: JoinHandle<()>,
     },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RemoteChangeEvent {
+    Insert { position: u64, content: String },
+    Delete { position: u64, length: u64 },
+}
+
+impl From<RemoteChange> for RemoteChangeEvent {
+    fn from(c: RemoteChange) -> Self {
+        match c {
+            RemoteChange::Insert { position, content } => {
+                RemoteChangeEvent::Insert { position, content }
+            }
+            RemoteChange::Delete { position, length } => {
+                RemoteChangeEvent::Delete { position, length }
+            }
+        }
+    }
 }
 
 #[derive(Debug)]

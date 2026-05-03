@@ -8,7 +8,8 @@ mod ws_management;
 
 use crate::app_config::config::AppConfig;
 use crate::app_config::identity;
-use crate::crdt::crdt_handler;
+use crate::crdt::local_op_handler;
+#[cfg(debug_assertions)]
 use crate::debug::document_logger::spawn_linked_list_logger;
 use crate::state::appstate::AppState;
 use crate::state::ws_state::WsState;
@@ -79,8 +80,8 @@ pub fn run() {
         )
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
-            crdt_handler::insert,
-            crdt_handler::delete,
+            local_op_handler::insert,
+            local_op_handler::delete,
             session::command::start_host_session,
             session::command::stop_host_session,
             session::command::join_session,
@@ -90,7 +91,7 @@ pub fn run() {
             identity::get_identity,
             identity::set_username,
             #[cfg(debug_assertions)]
-            crdt_handler::toggle_crdt_logging
+            local_op_handler::toggle_crdt_logging
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
