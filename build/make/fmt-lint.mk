@@ -1,4 +1,4 @@
-.PHONY: format-crdt format-tauri format-go format-frontend format-all lint-frontend lint-crdt lint-tauri lint-go lint-all check install-hooks
+.PHONY: format-crdt format-tauri format-go format-frontend format-all lint-frontend lint-crdt lint-tauri lint-go lint-all check
 
 # ------------- formatting --------------
 format-crdt:
@@ -31,9 +31,3 @@ lint-go:
 lint-all: lint-frontend lint-crdt lint-tauri lint-go
 
 check: format-all lint-all
-
-# ------------- git hooks -------------
-install-hooks:
-	cp scripts/hooks/pre-push .git/hooks/pre-push
-	chmod +x .git/hooks/pre-push
-	@echo "Git hook installed: .git/hooks/pre-push"
