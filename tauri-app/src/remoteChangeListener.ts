@@ -14,7 +14,9 @@ type RemoteChangeEvent =
 
 interface LogEntry {
   id: number;
-  html: string;
+  operationClass: string;
+  operationLabel: string;
+  payload: string;
 }
 
 interface UseRemoteChangeListenerArgs {
@@ -63,11 +65,15 @@ export function useRemoteChangeListener({
           ]);
 
           const count = ++eventCountRef.current;
-          const html =
-            `<span class="label">#${count}</span>` +
-            `<span class="op-insert">[remote-insert]</span> ` +
-            `offset=${change.position}  text=${JSON.stringify(change.content)}`;
-          setEventLog((prev) => [...prev, { id: count, html }]);
+          setEventLog((prev) => [
+            ...prev,
+            {
+              id: count,
+              operationClass: "op-insert",
+              operationLabel: "[remote-insert]",
+              payload: `offset=${change.position}  text=${JSON.stringify(change.content)}`,
+            },
+          ]);
         } else {
           const startPos = model.getPositionAt(change.position);
           const endPos = model.getPositionAt(change.position + change.length);
@@ -85,11 +91,15 @@ export function useRemoteChangeListener({
           ]);
 
           const count = ++eventCountRef.current;
-          const html =
-            `<span class="label">#${count}</span>` +
-            `<span class="op-delete">[remote-delete]</span> ` +
-            `offset=${change.position}  length=${change.length}`;
-          setEventLog((prev) => [...prev, { id: count, html }]);
+          setEventLog((prev) => [
+            ...prev,
+            {
+              id: count,
+              operationClass: "op-delete",
+              operationLabel: "[remote-delete]",
+              payload: `offset=${change.position}  length=${change.length}`,
+            },
+          ]);
         }
       } finally {
         isApplyingRemote.current = false;

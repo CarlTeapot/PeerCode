@@ -2,18 +2,16 @@ use std::sync::{Arc, RwLock};
 
 use futures_util::StreamExt;
 use log::{debug, info, warn};
-use tauri::AppHandle;
 use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::crdt::remote_op_handler::handle_remote_binary;
 use crate::ws_management::ws_types::{Stream, WsConnection};
 
 pub async fn receive_loop(
     mut stream: Stream,
     connection: Arc<Mutex<WsConnection>>,
     write_tx: Arc<RwLock<Option<Arc<mpsc::Sender<Message>>>>>,
-    app: AppHandle,
+    op_tx: mpsc::UnboundedSender<Vec<u8>>,
 ) {
     info!("ws receiver loop started");
     while let Some(result) = stream.next().await {
@@ -23,7 +21,9 @@ pub async fn receive_loop(
             }
             Ok(Message::Binary(bytes)) => {
                 debug!("ws receiver binary message (bytes={})", bytes.len());
-                handle_remote_binary(&app, bytes.as_ref());
+                if op_tx.send(bytes.into()).is_err() {
+                    warn!("ws receiver: op processor channel closed; dropping frame");
+                }
             }
             Ok(Message::Ping(_)) => {
                 debug!("ws receiver ping");

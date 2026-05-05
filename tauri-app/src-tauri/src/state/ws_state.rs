@@ -8,6 +8,7 @@ use tokio::sync::{mpsc, Mutex};
 use tokio::time::timeout;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
+use crate::crdt::remote_op_handler::process_loop;
 use crate::ws_management::ws_receiver::receive_loop;
 use crate::ws_management::ws_types::{WsConnection, WsError};
 use crate::ws_management::ws_writer::write_loop;
@@ -78,20 +79,23 @@ impl WsState {
 
         let (sink, stream) = ws_stream.split();
         let (write_tx, write_rx) = mpsc::channel::<Message>(64);
+        let (op_tx, op_rx) = mpsc::unbounded_channel::<Vec<u8>>();
         debug!("ws channel created: write_buffer_capacity=64");
+        let processor = tokio::task::spawn(process_loop(op_rx, app.clone()));
         let sender = tokio::task::spawn(write_loop(sink, write_rx));
         let receiver = tokio::task::spawn(receive_loop(
             stream,
             Arc::clone(&self.connection),
             Arc::clone(&self.write_tx),
-            app,
+            op_tx,
         ));
-        debug!("ws sender/receiver tasks spawned");
+        debug!("ws sender/receiver/processor tasks spawned");
 
         let mut guard = self.connection.lock().await;
         if !matches!(*guard, WsConnection::Connecting) {
             receiver.abort();
             sender.abort();
+            processor.abort();
             warn!("ws connect cancelled before finalizing state");
             return Err(WsError::Cancelled);
         }
@@ -100,6 +104,7 @@ impl WsState {
             session_id: session_id.clone(),
             receiver,
             sender,
+            processor,
         };
 
         info!("websocket connected: url={url} room={session_id}");
@@ -128,11 +133,15 @@ impl WsState {
         let mut guard = self.connection.lock().await;
         match &mut *guard {
             WsConnection::Connected {
-                receiver, sender, ..
+                receiver,
+                sender,
+                processor,
+                ..
             } => {
-                debug!("ws disconnect: aborting sender/receiver tasks");
+                debug!("ws disconnect: aborting sender/receiver/processor tasks");
                 receiver.abort();
                 sender.abort();
+                processor.abort();
                 *self.write_tx.write().unwrap() = None;
                 *guard = WsConnection::Disconnected;
                 info!("websocket disconnected");

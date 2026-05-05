@@ -16,10 +16,9 @@ pub enum WsConnection {
     Connected {
         #[allow(dead_code)]
         session_id: String,
-        #[allow(dead_code)]
         receiver: JoinHandle<()>,
-        #[allow(dead_code)]
         sender: JoinHandle<()>,
+        processor: JoinHandle<()>,
     },
 }
 
