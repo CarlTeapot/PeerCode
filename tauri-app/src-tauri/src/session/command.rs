@@ -34,6 +34,7 @@ pub async fn start_host_session(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn join_session(
+    app: AppHandle,
     url: String,
     state: State<'_, AppState>,
     ws: State<'_, WsState>,
@@ -69,7 +70,7 @@ pub async fn join_session(
         join_info.room_id, guest_client_id
     );
 
-    ws.connect(&ws_url, join_info.room_id.clone())
+    ws.connect(&ws_url, join_info.room_id.clone(), app.clone())
         .await
         .map_err(|e| {
             *state.role.lock().unwrap() = AppRole::Undecided;
@@ -225,7 +226,10 @@ async fn connect(app: AppHandle, port: u16, room_id: String) {
     let local_ws_url =
         format!("ws://127.0.0.1:{port}/ws?room={room_id}&client_id={host_client_id}");
     let ws = app.state::<WsState>();
-    if let Err(e) = ws.connect(&local_ws_url, room_id.clone()).await {
+    if let Err(e) = ws
+        .connect(&local_ws_url, room_id.clone(), app.clone())
+        .await
+    {
         error!("local websocket connection failed (session still running): {e}");
     } else {
         info!(

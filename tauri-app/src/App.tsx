@@ -1,14 +1,18 @@
 import { useState, useRef, useEffect } from "react";
 import type { editor } from "monaco-editor";
-import Editor, { type OnMount } from "@monaco-editor/react";
+import Editor, { type OnMount, type Monaco } from "@monaco-editor/react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { useRemoteChangeListener } from "./remoteChangeListener";
 import { UsernameGate } from "./usernameSetup";
 import "./App.css";
 
 interface LogEntry {
   id: number;
-  html: string;
+  operationClass: string;
+  operationLabel: string;
+  payload: string;
+  wireMessage?: string;
 }
 
 interface AppContentProps {
@@ -22,6 +26,10 @@ function AppContent({ username }: AppContentProps) {
   const [eventLog, setEventLog] = useState<LogEntry[]>([]);
   const eventCountRef = useRef(0);
   const logRef = useRef<HTMLDivElement>(null);
+
+  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<Monaco | null>(null);
+  const isApplyingRemote = useRef(false);
 
   useEffect(() => {
     if (logRef.current) {
@@ -41,6 +49,18 @@ function AppContent({ username }: AppContentProps) {
   const [lanUrl, setLanUrl] = useState<string | null>(null);
   const [publicUrl, setPublicUrl] = useState<string | null>(null);
   const [sessionStatus, setSessionStatus] = useState<string>("starting...");
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
+
+  const copyUrl = async (label: string, url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopyStatus(`${label} URL copied`);
+      window.setTimeout(() => setCopyStatus(null), 1500);
+    } catch {
+      setCopyStatus(`Failed to copy ${label} URL`);
+      window.setTimeout(() => setCopyStatus(null), 1500);
+    }
+  };
 
   useEffect(() => {
     invoke<{
@@ -78,6 +98,14 @@ function AppContent({ username }: AppContentProps) {
   }, []);
   // --- end session links ---
 
+  useRemoteChangeListener({
+    editorRef,
+    monacoRef,
+    isApplyingRemote,
+    eventCountRef,
+    setEventLog,
+  });
+
   const [loggingEnabled, setLoggingEnabled] = useState(false);
   const toggleLogging = async () => {
     if (!isDevFeaturesEnabled) return;
@@ -85,12 +113,17 @@ function AppContent({ username }: AppContentProps) {
     setLoggingEnabled((prev) => !prev);
   };
 
-  const handleEditorMount: OnMount = (editor) => {
+  const handleEditorMount: OnMount = (editorInstance, monacoInstance) => {
+    editorRef.current = editorInstance;
+    monacoRef.current = monacoInstance;
     setStatus("editor ready");
     setStatusReady(true);
 
-    editor.onDidChangeModelContent(
+    editorInstance.onDidChangeModelContent(
       (event: editor.IModelContentChangedEvent) => {
+        // Skip changes that we ourselves applied from a remote peer.
+        if (isApplyingRemote.current) return;
+
         void (async () => {
           for (const change of event.changes) {
             const offset = change.rangeOffset;
@@ -128,21 +161,30 @@ function AppContent({ username }: AppContentProps) {
               }
             } catch (error) {
               const count = ++eventCountRef.current;
-              const errorHtml =
-                `<span class="label">#${count}</span>` +
-                `<span class="op-delete">[ipc-error]</span> ${String(error)}`;
-              setEventLog((prev) => [...prev, { id: count, html: errorHtml }]);
+              setEventLog((prev) => [
+                ...prev,
+                {
+                  id: count,
+                  operationClass: "op-delete",
+                  operationLabel: "[ipc-error]",
+                  payload: String(error),
+                },
+              ]);
               setStatus("ipc error");
               return;
             }
 
             const count = ++eventCountRef.current;
-            const html =
-              `<span class="label">#${count}</span>` +
-              `<span class="${opClass}">[${opType}]</span> ${payload}` +
-              `<span style="color:#555; margin-left:12px;">→ wire: ${wireMessage}</span>`;
-
-            setEventLog((prev) => [...prev, { id: count, html }]);
+            setEventLog((prev) => [
+              ...prev,
+              {
+                id: count,
+                operationClass: opClass,
+                operationLabel: `[${opType}]`,
+                payload,
+                wireMessage,
+              },
+            ]);
           }
         })();
       },
@@ -201,16 +243,54 @@ function AppContent({ username }: AppContentProps) {
           {sessionStatus}
         </span>
         {lanUrl && (
-          <div style={{ marginTop: 4 }}>
+          <div
+            style={{
+              marginTop: 4,
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+            }}
+          >
             <span style={{ color: "#aaa" }}>LAN: </span>
             <span style={{ color: "#0ff" }}>{lanUrl}</span>
+            <button
+              onClick={() => void copyUrl("LAN", lanUrl)}
+              style={{
+                fontSize: 11,
+                padding: "1px 6px",
+                borderRadius: 3,
+                border: "1px solid #555",
+                background: "#2c2c3d",
+                color: "#ddd",
+                cursor: "pointer",
+              }}
+            >
+              Copy
+            </button>
           </div>
         )}
         {publicUrl && (
-          <div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <span style={{ color: "#aaa" }}>Public: </span>
             <span style={{ color: "#0ff" }}>{publicUrl}</span>
+            <button
+              onClick={() => void copyUrl("Public", publicUrl)}
+              style={{
+                fontSize: 11,
+                padding: "1px 6px",
+                borderRadius: 3,
+                border: "1px solid #555",
+                background: "#2c2c3d",
+                color: "#ddd",
+                cursor: "pointer",
+              }}
+            >
+              Copy
+            </button>
           </div>
+        )}
+        {copyStatus && (
+          <div style={{ color: "#9ad", marginTop: 4 }}>{copyStatus}</div>
         )}
         {!lanUrl && !publicUrl && sessionStatus === "starting..." && (
           <span style={{ color: "#888", marginLeft: 8 }}>
@@ -238,11 +318,19 @@ function AppContent({ username }: AppContentProps) {
       </div>
       <div className="event-log" ref={logRef}>
         {eventLog.map((entry) => (
-          <div
-            className="entry"
-            key={entry.id}
-            dangerouslySetInnerHTML={{ __html: entry.html }}
-          />
+          <div className="entry" key={entry.id}>
+            <span className="label">#{entry.id}</span>
+            <span className={entry.operationClass}>
+              {entry.operationLabel}
+            </span>{" "}
+            {entry.payload}
+            {entry.wireMessage && (
+              <span style={{ color: "#555", marginLeft: 12 }}>
+                {" "}
+                {"->"} wire: {entry.wireMessage}
+              </span>
+            )}
+          </div>
         ))}
       </div>
     </>

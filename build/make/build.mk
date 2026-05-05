@@ -1,4 +1,4 @@
-.PHONY: dev prod prod-build prod-run dev-gateway build-gateway build install-cloudflared
+.PHONY: dev prod prod-build prod-run dev-gateway build-gateway build install-cloudflared install-rust-dev-tools
 
 FRONTEND_BUILD_OUT := tauri-app/dist/index.html
 FRONTEND_BUILD_INPUTS := $(shell git ls-files tauri-app/src) tauri-app/index.html tauri-app/vite.config.ts tauri-app/package.json tauri-app/package-lock.json tauri-app/.env.production
@@ -19,15 +19,21 @@ $(CLOUDFLARED_BIN):
 
 install-cloudflared: $(CLOUDFLARED_BIN)
 
+install-rust-dev-tools:
+	bash build/scripts/install-rust-dev-tools.sh
+
 $(GATEWAY_BIN): $(GATEWAY_INPUTS)
 	bash build/scripts/build-gateway.sh "$(TARGET_TRIPLE)" "$(GATEWAY_BIN)"
 
 build-gateway: $(GATEWAY_BIN)
 
 PORT ?= 1420
+RUSTC_WRAPPER ?= sccache
+MOLD_EXISTS := $(shell command -v mold >/dev/null 2>&1 && echo yes || echo no)
+RUSTFLAGS ?= $(if $(filter yes,$(MOLD_EXISTS)),-C link-arg=-fuse-ld=mold,)
 
-dev: $(CLOUDFLARED_BIN) $(GATEWAY_BIN)
-	cd tauri-app && VITE_PORT=$(PORT) npx tauri dev --config '{"build":{"devUrl":"http://localhost:$(PORT)"}}'
+dev: install-rust-dev-tools $(CLOUDFLARED_BIN) $(GATEWAY_BIN)
+	cd tauri-app && RUSTC_WRAPPER=$(RUSTC_WRAPPER) RUSTFLAGS="$(RUSTFLAGS)" VITE_PORT=$(PORT) npx tauri dev --config '{"build":{"devUrl":"http://localhost:$(PORT)"}}'
 
 $(FRONTEND_BUILD_OUT): $(FRONTEND_BUILD_INPUTS)
 	cd tauri-app && npm run build

@@ -7,11 +7,11 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::ws_management::ws_types::{Stream, WsConnection};
 
-//TODO: handle messages and integrate with crdt
 pub async fn receive_loop(
     mut stream: Stream,
     connection: Arc<Mutex<WsConnection>>,
     write_tx: Arc<RwLock<Option<Arc<mpsc::Sender<Message>>>>>,
+    op_tx: mpsc::UnboundedSender<Vec<u8>>,
 ) {
     info!("ws receiver loop started");
     while let Some(result) = stream.next().await {
@@ -21,6 +21,9 @@ pub async fn receive_loop(
             }
             Ok(Message::Binary(bytes)) => {
                 debug!("ws receiver binary message (bytes={})", bytes.len());
+                if op_tx.send(bytes.into()).is_err() {
+                    warn!("ws receiver: op processor channel closed; dropping frame");
+                }
             }
             Ok(Message::Ping(_)) => {
                 debug!("ws receiver ping");

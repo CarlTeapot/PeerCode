@@ -3,10 +3,12 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use log::{debug, info, warn};
+use tauri::AppHandle;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::timeout;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
+use crate::crdt::remote_op_handler::process_loop;
 use crate::ws_management::ws_receiver::receive_loop;
 use crate::ws_management::ws_types::{WsConnection, WsError};
 use crate::ws_management::ws_writer::write_loop;
@@ -30,7 +32,12 @@ impl WsState {
         }
     }
 
-    pub async fn connect(&self, url: &str, session_id: String) -> Result<(), WsError> {
+    pub async fn connect(
+        &self,
+        url: &str,
+        session_id: String,
+        app: AppHandle,
+    ) -> Result<(), WsError> {
         debug!("starting ws connection request: url={url} session_id={session_id}");
         {
             let mut guard = self.connection.lock().await;
@@ -72,19 +79,23 @@ impl WsState {
 
         let (sink, stream) = ws_stream.split();
         let (write_tx, write_rx) = mpsc::channel::<Message>(64);
+        let (op_tx, op_rx) = mpsc::unbounded_channel::<Vec<u8>>();
         debug!("ws channel created: write_buffer_capacity=64");
+        let processor = tokio::task::spawn(process_loop(op_rx, app.clone()));
         let sender = tokio::task::spawn(write_loop(sink, write_rx));
         let receiver = tokio::task::spawn(receive_loop(
             stream,
             Arc::clone(&self.connection),
             Arc::clone(&self.write_tx),
+            op_tx,
         ));
-        debug!("ws sender/receiver tasks spawned");
+        debug!("ws sender/receiver/processor tasks spawned");
 
         let mut guard = self.connection.lock().await;
         if !matches!(*guard, WsConnection::Connecting) {
             receiver.abort();
             sender.abort();
+            processor.abort();
             warn!("ws connect cancelled before finalizing state");
             return Err(WsError::Cancelled);
         }
@@ -93,10 +104,28 @@ impl WsState {
             session_id: session_id.clone(),
             receiver,
             sender,
+            processor,
         };
 
         info!("websocket connected: url={url} room={session_id}");
         Ok(())
+    }
+
+    pub async fn send_raw(&self, bytes: Vec<u8>) {
+        let tx = {
+            let guard = self.write_tx.read().unwrap();
+            guard.as_ref().map(Arc::clone)
+        };
+        match tx {
+            Some(tx) => {
+                if tx.send(Message::Binary(bytes.into())).await.is_err() {
+                    warn!("ws send_raw: writer channel closed; frame dropped");
+                }
+            }
+            None => {
+                warn!("ws send_raw: no active connection; frame dropped");
+            }
+        }
     }
 
     pub async fn disconnect(&self) -> Result<(), WsError> {
@@ -104,11 +133,15 @@ impl WsState {
         let mut guard = self.connection.lock().await;
         match &mut *guard {
             WsConnection::Connected {
-                receiver, sender, ..
+                receiver,
+                sender,
+                processor,
+                ..
             } => {
-                debug!("ws disconnect: aborting sender/receiver tasks");
+                debug!("ws disconnect: aborting sender/receiver/processor tasks");
                 receiver.abort();
                 sender.abort();
+                processor.abort();
                 *self.write_tx.write().unwrap() = None;
                 *guard = WsConnection::Disconnected;
                 info!("websocket disconnected");
