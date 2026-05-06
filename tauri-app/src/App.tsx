@@ -27,23 +27,26 @@ function AppContent({ username }: AppContentProps) {
   const [eventLog, setEventLog] = useState<LogEntry[]>([]);
   const eventCountRef = useRef(0);
   const logRef = useRef<HTMLDivElement>(null);
-  const editorInstanceRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<Monaco | null>(null);
+  const isApplyingRemote = useRef(false);
 
   const handleDocumentLoaded = useCallback((text: string, name: string) => {
-    const ed = editorInstanceRef.current;
+    const ed = editorRef.current;
     if (ed) {
       ed.setValue(text);
     }
     const count = ++eventCountRef.current;
-    const html =
-      `<span class="label">#${count}</span>` +
-      `<span class="op-insert">[loaded]</span> document "${name}" (${text.length} chars)`;
-    setEventLog((prev) => [...prev, { id: count, html }]);
+    setEventLog((prev) => [
+      ...prev,
+      {
+        id: count,
+        operationClass: "op-insert",
+        operationLabel: "[loaded]",
+        payload: `document "${name}" (${text.length} chars)`,
+      },
+    ]);
   }, []);
-
-  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
-  const monacoRef = useRef<Monaco | null>(null);
-  const isApplyingRemote = useRef(false);
 
   useEffect(() => {
     if (logRef.current) {
