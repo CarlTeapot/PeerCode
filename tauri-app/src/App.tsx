@@ -10,6 +10,7 @@ import Editor, { type OnMount, type Monaco } from "@monaco-editor/react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useRemoteChangeListener } from "./remoteChangeListener";
+import { useSnapshotListener } from "./snapshotListener";
 import {
   UsernameGate,
   overlayStyle,
@@ -407,47 +408,12 @@ function AppContent({ username }: AppContentProps) {
     setEventLog,
   });
 
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let cancelled = false;
-
-    listen<{ text: string }>("crdt://snapshot-applied", (e) => {
-      const ed = editorRef.current;
-      if (!ed) return;
-
-      isApplyingRemote.current = true;
-      try {
-        ed.setValue(e.payload.text);
-      } finally {
-        isApplyingRemote.current = false;
-      }
-
-      const count = ++eventCountRef.current;
-      setEventLog((prev) => [
-        ...prev,
-        {
-          id: count,
-          operationClass: "op-snapshot",
-          operationLabel: "[snapshot-applied]",
-          payload: `text_len=${e.payload.text.length}`,
-        },
-      ]);
-    }).then((fn) => {
-      if (cancelled) {
-        fn();
-      } else {
-        unlisten = fn;
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      if (unlisten) {
-        unlisten();
-        unlisten = null;
-      }
-    };
-  }, [editorRef, isApplyingRemote, eventCountRef, setEventLog]);
+  useSnapshotListener({
+    editorRef,
+    isApplyingRemote,
+    eventCountRef,
+    setEventLog,
+  });
 
   const [loggingEnabled, setLoggingEnabled] = useState(false);
   const toggleLogging = async () => {

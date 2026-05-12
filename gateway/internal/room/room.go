@@ -168,13 +168,13 @@ func (r *Room) BroadcastAll(data []byte) {
 
 func (r *Room) getPeers(exclude *client.Client) []*client.Client {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	targets := make([]*client.Client, 0, len(r.clients))
 	for c := range r.clients {
 		if exclude == nil || c != exclude {
 			targets = append(targets, c)
 		}
 	}
-	r.mu.Unlock()
 	return targets
 }
 

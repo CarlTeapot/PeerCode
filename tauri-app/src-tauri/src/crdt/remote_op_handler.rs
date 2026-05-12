@@ -9,8 +9,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use crate::state::appstate::AppState;
 use crate::ws_management::ws_types::{RemoteChangeEvent, SnapshotAppliedEvent};
 
-pub const REMOTE_CHANGE_EVENT: &str = "crdt://remote-change";
-pub const SNAPSHOT_APPLIED_EVENT: &str = "crdt://snapshot-applied";
+const REMOTE_CHANGE_EVENT: &str = "crdt://remote-change";
+const SNAPSHOT_APPLIED_EVENT: &str = "crdt://snapshot-applied";
 
 pub async fn process_loop(mut rx: UnboundedReceiver<Vec<u8>>, app: AppHandle) {
     info!("op processor loop started");

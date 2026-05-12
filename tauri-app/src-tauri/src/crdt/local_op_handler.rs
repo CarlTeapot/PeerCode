@@ -2,7 +2,7 @@ use crdt_core::wire::{encode_op, OpMessage};
 use log::{debug, error, info};
 use tauri::State;
 
-use crate::state::appstate::AppState;
+use crate::state::appstate::{AppRole, AppState};
 use crate::state::ws_state::WsState;
 use std::sync::atomic::Ordering;
 
@@ -93,22 +93,20 @@ pub async fn delete(
 }
 
 async fn maybe_send_snapshot(state: &State<'_, AppState>, ws: &State<'_, WsState>) {
-    if !matches!(
-        *state.role.lock().unwrap(),
-        crate::state::appstate::AppRole::Host { .. }
-    ) {
+    if !matches!(*state.role.lock().unwrap(), AppRole::Host { .. }) {
         return;
     }
     let count = state.ops_since_snapshot.fetch_add(1, Ordering::Relaxed) + 1;
-    if count >= SNAPSHOT_REFRESH_INTERVAL {
-        state.ops_since_snapshot.store(0, Ordering::Relaxed);
-        let snapshot_frame = {
-            let doc = state.document.lock().unwrap();
-            crdt_core::encode_snapshot(&doc.to_snapshot())
-        };
-        ws.send_raw(snapshot_frame).await;
-        info!("periodic snapshot sent (after {} ops)", count);
+    if count < SNAPSHOT_REFRESH_INTERVAL {
+        return;
     }
+    state.ops_since_snapshot.store(0, Ordering::Relaxed);
+    let snapshot_frame = {
+        let doc = state.document.lock().unwrap();
+        crdt_core::encode_snapshot(&doc.to_snapshot())
+    };
+    ws.send_raw(snapshot_frame).await;
+    info!("periodic snapshot sent (after {} ops)", count);
 }
 
 #[cfg(debug_assertions)]
