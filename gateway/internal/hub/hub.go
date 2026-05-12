@@ -116,7 +116,7 @@ func readWSParams(w http.ResponseWriter, r *http.Request) (roomID, clientID stri
 }
 
 func dispatchFrame(rm *room.Room, sender *client.Client, raw []byte) {
-	if _, err := wire.DecodeOpFrame(raw); err != nil {
+	if err := wire.ValidateFrame(raw); err != nil {
 		slog.Warn(
 			"dropping invalid frame",
 			"room_id", rm.ID,
@@ -178,6 +178,10 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		h.unregister(c, rm)
 		slog.Info("client left room", "room_id", roomID, "client_id", clientID)
 	}()
+
+	if rm.ReplayTo(c) {
+		slog.Info("snapshot replayed to joiner", "room_id", roomID, "client_id", clientID)
+	}
 
 	ctx := r.Context()
 	ops := make(chan []byte, stagingOpsBuffer)

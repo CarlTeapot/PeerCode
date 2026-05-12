@@ -1,3 +1,4 @@
+use crate::snapshot::{Snapshot, SnapshotError};
 use crate::store::DeleteSet;
 use crate::structs::Block;
 use crate::types::BlockId;
@@ -44,7 +45,9 @@ pub enum WireError {
     EmptyFrame,
     UnknownPrefix(u8),
     NotAnOp,
+    NotASnapshot,
     Decode(bitcode::Error),
+    SnapshotDecode(SnapshotError),
 }
 
 impl fmt::Display for WireError {
@@ -57,7 +60,11 @@ impl fmt::Display for WireError {
             WireError::NotAnOp => {
                 write!(f, "wire frame carries a snapshot, not an op")
             }
+            WireError::NotASnapshot => {
+                write!(f, "wire frame carries an op, not a snapshot")
+            }
             WireError::Decode(e) => write!(f, "bitcode decode failed: {e}"),
+            WireError::SnapshotDecode(e) => write!(f, "snapshot decode failed: {e}"),
         }
     }
 }
@@ -66,6 +73,7 @@ impl Error for WireError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             WireError::Decode(e) => Some(e),
+            WireError::SnapshotDecode(e) => Some(e),
             _ => None,
         }
     }
@@ -86,9 +94,27 @@ pub fn decode_op(frame: &[u8]) -> Result<OpMessage, WireError> {
     let (&prefix, payload) = frame.split_first().ok_or(WireError::EmptyFrame)?;
     match prefix {
         OP_PREFIX => bitcode::decode(payload).map_err(WireError::Decode),
-        // TODO(T15): route through a snapshot decoder once the snapshot
-        // format lands;
         SNAPSHOT_PREFIX => Err(WireError::NotAnOp),
+        b => Err(WireError::UnknownPrefix(b)),
+    }
+}
+
+pub fn encode_snapshot(snap: &Snapshot) -> Vec<u8> {
+    trace!("encode snapshot requested");
+    let payload = snap.encode();
+    let mut frame = Vec::with_capacity(1 + payload.len());
+    frame.push(SNAPSHOT_PREFIX);
+    frame.extend_from_slice(&payload);
+    trace!("encode snapshot frame: {} bytes", frame.len());
+    frame
+}
+
+pub fn decode_snapshot(frame: &[u8]) -> Result<Snapshot, WireError> {
+    trace!("decode snapshot requested: {} bytes", frame.len());
+    let (&prefix, payload) = frame.split_first().ok_or(WireError::EmptyFrame)?;
+    match prefix {
+        SNAPSHOT_PREFIX => Snapshot::decode(payload).map_err(WireError::SnapshotDecode),
+        OP_PREFIX => Err(WireError::NotASnapshot),
         b => Err(WireError::UnknownPrefix(b)),
     }
 }

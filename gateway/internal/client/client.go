@@ -47,6 +47,11 @@ func (c *Client) Send(data []byte) (ok bool) {
 	}
 }
 
+// for testing only
+func (c *Client) SendChan() <-chan []byte {
+	return c.send
+}
+
 func (c *Client) ForceClose() {
 	if c.conn == nil {
 		slog.Debug("force-close skipped: client connection is nil", "room_id", c.RoomID, "client_id", c.ID)

@@ -98,3 +98,54 @@ func TestRoom_JoinAfterCloseIsRejected(t *testing.T) {
 
 	<-runDone
 }
+
+func TestRoom_SnapshotReplayToJoiner(t *testing.T) {
+	r := New("room-snap")
+	runDone := make(chan struct{})
+	go func() { r.Run(); close(runDone) }()
+
+	host := client.New("host", "room-snap", nil)
+	r.Join(host)
+
+	snapFrame := []byte{0x01, 0xAA, 0xBB}
+	r.Ops() <- BroadcastMsg{Sender: host, Data: snapFrame}
+	time.Sleep(50 * time.Millisecond)
+
+	op1 := []byte{0x00, 0x01}
+	op2 := []byte{0x00, 0x02}
+	r.Ops() <- BroadcastMsg{Sender: host, Data: op1}
+	r.Ops() <- BroadcastMsg{Sender: host, Data: op2}
+	time.Sleep(50 * time.Millisecond)
+
+	joiner := client.New("joiner", "room-snap", nil)
+	r.Join(joiner)
+
+	got := r.ReplayTo(joiner)
+	if !got {
+		t.Fatal("ReplayTo returned false; expected snapshot replay")
+	}
+
+	var received [][]byte
+	for {
+		select {
+		case msg := <-joiner.SendChan():
+			received = append(received, msg)
+		default:
+			goto done
+		}
+	}
+done:
+	if len(received) != 3 {
+		t.Fatalf("joiner received %d messages, want 3 (snapshot + 2 ops)", len(received))
+	}
+	if received[0][0] != 0x01 {
+		t.Fatalf("first message prefix = 0x%02X, want 0x01 (snapshot)", received[0][0])
+	}
+	if received[1][0] != 0x00 || received[2][0] != 0x00 {
+		t.Fatalf("op messages have wrong prefix")
+	}
+
+	r.Leave(host, nil)
+	r.Leave(joiner, nil)
+	<-runDone
+}

@@ -42,6 +42,11 @@ impl From<RemoteChange> for RemoteChangeEvent {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct SnapshotAppliedEvent {
+    pub text: String,
+}
+
 #[derive(Debug)]
 pub enum WsError {
     AlreadyConnected,

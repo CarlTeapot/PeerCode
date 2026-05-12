@@ -45,10 +45,10 @@ func TestDecodeOpFrame_UnknownPrefix(t *testing.T) {
 	}
 }
 
-func TestDecodeOpFrame_SnapshotPrefixIsReserved(t *testing.T) {
+func TestDecodeOpFrame_SnapshotPrefixRejectsAsOp(t *testing.T) {
 	_, err := DecodeOpFrame([]byte{PrefixSnapshot, 0x00})
-	if !errors.Is(err, ErrSnapshotNotSupported) {
-		t.Fatalf("err = %v, want ErrSnapshotNotSupported", err)
+	if err == nil {
+		t.Fatal("expected error for snapshot prefix, got nil")
 	}
 }
 
@@ -64,5 +64,38 @@ func TestEncodeOpFrame_RoundTrip(t *testing.T) {
 	}
 	if !bytes.Equal(got, payload) {
 		t.Fatalf("payload = %x, want %x", got, payload)
+	}
+}
+
+func TestValidateFrame_AcceptsOpAndSnapshot(t *testing.T) {
+	if err := ValidateFrame([]byte{PrefixOp, 0x00}); err != nil {
+		t.Fatalf("ValidateFrame(op) = %v, want nil", err)
+	}
+	if err := ValidateFrame([]byte{PrefixSnapshot, 0x00}); err != nil {
+		t.Fatalf("ValidateFrame(snapshot) = %v, want nil", err)
+	}
+}
+
+func TestValidateFrame_RejectsUnknown(t *testing.T) {
+	if err := ValidateFrame([]byte{0xFF}); !errors.Is(err, ErrUnknownPrefix) {
+		t.Fatalf("ValidateFrame(0xFF) = %v, want ErrUnknownPrefix", err)
+	}
+}
+
+func TestValidateFrame_RejectsEmpty(t *testing.T) {
+	if err := ValidateFrame(nil); !errors.Is(err, ErrEmptyFrame) {
+		t.Fatalf("ValidateFrame(nil) = %v, want ErrEmptyFrame", err)
+	}
+}
+
+func TestIsSnapshotFrame(t *testing.T) {
+	if !IsSnapshotFrame([]byte{PrefixSnapshot, 0x01}) {
+		t.Fatal("IsSnapshotFrame should return true for snapshot prefix")
+	}
+	if IsSnapshotFrame([]byte{PrefixOp, 0x01}) {
+		t.Fatal("IsSnapshotFrame should return false for op prefix")
+	}
+	if IsSnapshotFrame(nil) {
+		t.Fatal("IsSnapshotFrame should return false for nil")
 	}
 }

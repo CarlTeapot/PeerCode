@@ -1,15 +1,16 @@
 use crdt_core::store::DeleteSet;
 use crdt_core::structs::Block;
 use crdt_core::wire::WireBlock;
-use crdt_core::{decode_op, Document, OpMessage, RemoteChange};
+use crdt_core::{decode_op, decode_snapshot, Document, OpMessage, RemoteChange, SNAPSHOT_PREFIX};
 use log::{debug, error, info, warn};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::state::appstate::AppState;
-use crate::ws_management::ws_types::RemoteChangeEvent;
+use crate::ws_management::ws_types::{RemoteChangeEvent, SnapshotAppliedEvent};
 
 pub const REMOTE_CHANGE_EVENT: &str = "crdt://remote-change";
+pub const SNAPSHOT_APPLIED_EVENT: &str = "crdt://snapshot-applied";
 
 pub async fn process_loop(mut rx: UnboundedReceiver<Vec<u8>>, app: AppHandle) {
     info!("op processor loop started");
@@ -20,6 +21,38 @@ pub async fn process_loop(mut rx: UnboundedReceiver<Vec<u8>>, app: AppHandle) {
 }
 
 pub fn handle_remote_binary(app: &AppHandle, bytes: &[u8]) {
+    if bytes.first().copied() == Some(SNAPSHOT_PREFIX) {
+        handle_snapshot(app, bytes);
+    } else {
+        handle_op(app, bytes);
+    }
+}
+
+fn handle_snapshot(app: &AppHandle, bytes: &[u8]) {
+    let snap = match decode_snapshot(bytes) {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("snapshot decode failed: {e}");
+            return;
+        }
+    };
+
+    let text = {
+        let state = app.state::<AppState>();
+        let mut doc = state.document.lock().unwrap();
+        let local_client_id = doc.client_id;
+        let forked = Document::from_snapshot(snap).fork(local_client_id);
+        *doc = forked;
+        doc.get_text()
+    };
+
+    info!("snapshot applied: text_len={}", text.len());
+    if let Err(e) = app.emit(SNAPSHOT_APPLIED_EVENT, SnapshotAppliedEvent { text }) {
+        warn!("failed to emit snapshot-applied event: {e}");
+    }
+}
+
+fn handle_op(app: &AppHandle, bytes: &[u8]) {
     let op = match decode_op(bytes) {
         Ok(op) => op,
         Err(e) => {
