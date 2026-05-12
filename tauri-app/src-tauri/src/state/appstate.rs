@@ -72,14 +72,6 @@ impl AppState {
     }
 
     pub fn leave_session(&self, ws: &WsState) {
-        let previous_role = {
-            let mut role = self.role.lock().unwrap();
-            let prev = role.clone();
-            *role = AppRole::Undecided;
-            prev
-        };
-        info!("role reset to idle from status={}", previous_role.status());
-
         ws.disconnect_nowait();
     }
 
