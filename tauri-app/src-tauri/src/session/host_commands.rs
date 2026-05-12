@@ -180,5 +180,17 @@ async fn connect(app: AppHandle, port: u16, room_id: String) {
             "local websocket connection established for host session: room_id={}",
             room_id
         );
+
+        let snapshot_frame = {
+            let state = app.state::<AppState>();
+            let doc = state.document.lock().unwrap();
+            let snap = doc.to_snapshot();
+            crdt_core::encode_snapshot(&snap)
+        };
+        ws.send_raw(snapshot_frame).await;
+        app.state::<AppState>()
+            .ops_since_snapshot
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        info!("host sent initial document snapshot to gateway");
     }
 }
