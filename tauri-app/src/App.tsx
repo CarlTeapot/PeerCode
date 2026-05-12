@@ -183,6 +183,29 @@ interface AppContentProps {
   username: string;
 }
 
+function installPlainTextPasteHandler(
+  editorInstance: editor.IStandaloneCodeEditor,
+) {
+  const domNode = editorInstance.getDomNode();
+  if (!domNode) return;
+
+  const handlePaste = (event: ClipboardEvent) => {
+    const text = event.clipboardData?.getData("text/plain") ?? "";
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (!text) return;
+
+    editorInstance.focus();
+    editorInstance.trigger("plain-text-paste", "type", { text });
+  };
+
+  domNode.addEventListener("paste", handlePaste, { capture: true });
+  editorInstance.onDidDispose(() => {
+    domNode.removeEventListener("paste", handlePaste, { capture: true });
+  });
+}
+
 function AppContent({ username }: AppContentProps) {
   const isDevFeaturesEnabled = import.meta.env.VITE_DEV_FEATURES === "true";
   const [status, setStatus] = useState("loading...");
@@ -417,6 +440,7 @@ function AppContent({ username }: AppContentProps) {
   const handleEditorMount: OnMount = (editorInstance, monacoInstance) => {
     editorRef.current = editorInstance;
     monacoRef.current = monacoInstance;
+    installPlainTextPasteHandler(editorInstance);
     setStatus("editor ready");
     setStatusReady(true);
 
