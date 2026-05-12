@@ -3,13 +3,14 @@ use crate::state::ws_state::WsState;
 use crdt_core::types::ClientId;
 use crdt_core::Document;
 use log::{info, warn};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Mutex;
 pub struct AppState {
     pub document: Mutex<Document>,
     pub role: Mutex<AppRole>,
     pub processes: Mutex<HostProcesses>,
     pub current_document_name: Mutex<Option<String>>,
+    pub ops_since_snapshot: AtomicU32,
     #[cfg(debug_assertions)]
     pub crdt_logging_enabled: AtomicBool,
 }
@@ -61,6 +62,7 @@ impl AppState {
                 tunnel: None,
             }),
             current_document_name: Mutex::new(None),
+            ops_since_snapshot: AtomicU32::new(0),
             #[cfg(debug_assertions)]
             crdt_logging_enabled: AtomicBool::new(false),
         }

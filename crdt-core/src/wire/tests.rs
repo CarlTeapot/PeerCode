@@ -104,3 +104,49 @@ fn wire_error_display_has_stable_text() {
     let e = WireError::EmptyFrame;
     assert!(!format!("{e}").is_empty());
 }
+
+#[test]
+fn encode_decode_snapshot_round_trips() {
+    use crate::snapshot::{SNAPSHOT_VERSION, Snapshot, SnapshotBlock};
+
+    let snap = Snapshot {
+        version: SNAPSHOT_VERSION,
+        client_id: ClientId::new(42),
+        blocks: vec![SnapshotBlock {
+            id: bid(42, 0),
+            origin_left: None,
+            origin_right: None,
+            left: None,
+            right: None,
+            content: "hello".to_string(),
+            is_deleted: false,
+        }],
+        state_vector: vec![(ClientId::new(42), 1)],
+        delete_set: DeleteSet::new(),
+        seen_delete_set: DeleteSet::new(),
+        head: Some(bid(42, 0)),
+        pending_blocks: vec![],
+        pending_delete_sets: vec![],
+    };
+    let frame = encode_snapshot(&snap);
+    assert_eq!(frame[0], SNAPSHOT_PREFIX);
+    let decoded = decode_snapshot(&frame).expect("decode");
+    assert_eq!(decoded.version, SNAPSHOT_VERSION);
+    assert_eq!(decoded.client_id, snap.client_id);
+    assert_eq!(decoded.blocks.len(), 1);
+    assert_eq!(decoded.blocks[0].content, "hello");
+}
+
+#[test]
+fn decode_snapshot_rejects_op_prefix() {
+    let frame = vec![OP_PREFIX, 0x00];
+    assert!(matches!(
+        decode_snapshot(&frame),
+        Err(WireError::NotASnapshot)
+    ));
+}
+
+#[test]
+fn decode_snapshot_rejects_empty_frame() {
+    assert!(matches!(decode_snapshot(&[]), Err(WireError::EmptyFrame)));
+}

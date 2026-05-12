@@ -10,6 +10,7 @@ import Editor, { type OnMount, type Monaco } from "@monaco-editor/react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useRemoteChangeListener } from "./remoteChangeListener";
+import { useSnapshotListener } from "./snapshotListener";
 import {
   UsernameGate,
   overlayStyle,
@@ -425,6 +426,13 @@ function AppContent({ username }: AppContentProps) {
   useRemoteChangeListener({
     editorRef,
     monacoRef,
+    isApplyingRemote,
+    eventCountRef,
+    setEventLog,
+  });
+
+  useSnapshotListener({
+    editorRef,
     isApplyingRemote,
     eventCountRef,
     setEventLog,

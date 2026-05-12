@@ -1,10 +1,12 @@
 use crdt_core::wire::{encode_op, OpMessage};
-use log::{debug, error};
+use log::{debug, error, info};
 use tauri::State;
 
-use crate::state::appstate::AppState;
+use crate::state::appstate::{AppRole, AppState};
 use crate::state::ws_state::WsState;
 use std::sync::atomic::Ordering;
+
+const SNAPSHOT_REFRESH_INTERVAL: u32 = 100;
 
 #[tauri::command]
 pub async fn insert(
@@ -44,6 +46,7 @@ pub async fn insert(
     if let Some(wire_block) = wire_block_opt {
         let frame = encode_op(&OpMessage::Insert(wire_block));
         ws.send_raw(frame).await;
+        maybe_send_snapshot(&state, &ws).await;
     }
 
     Ok(())
@@ -83,9 +86,27 @@ pub async fn delete(
     if !delete_set.is_empty() {
         let frame = encode_op(&OpMessage::Delete(delete_set));
         ws.send_raw(frame).await;
+        maybe_send_snapshot(&state, &ws).await;
     }
 
     Ok(())
+}
+
+async fn maybe_send_snapshot(state: &State<'_, AppState>, ws: &State<'_, WsState>) {
+    if !matches!(*state.role.lock().unwrap(), AppRole::Host { .. }) {
+        return;
+    }
+    let count = state.ops_since_snapshot.fetch_add(1, Ordering::Relaxed) + 1;
+    if count < SNAPSHOT_REFRESH_INTERVAL {
+        return;
+    }
+    state.ops_since_snapshot.store(0, Ordering::Relaxed);
+    let snapshot_frame = {
+        let doc = state.document.lock().unwrap();
+        crdt_core::encode_snapshot(&doc.to_snapshot())
+    };
+    ws.send_raw(snapshot_frame).await;
+    info!("periodic snapshot sent (after {} ops)", count);
 }
 
 #[cfg(debug_assertions)]

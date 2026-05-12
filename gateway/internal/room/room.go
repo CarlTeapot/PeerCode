@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"gateway/internal/client"
+	"gateway/internal/wire"
 )
 
 const opsBufferSize = 256
@@ -20,6 +21,9 @@ type Room struct {
 	mu      sync.Mutex
 	clients map[*client.Client]struct{}
 	closed  bool
+
+	latestSnapshot []byte
+	opsLog         [][]byte
 
 	ops  chan BroadcastMsg
 	done chan struct{}
@@ -77,6 +81,53 @@ func (r *Room) Size() int {
 	return len(r.clients)
 }
 
+func (r *Room) StoreSnapshot(data []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.latestSnapshot = make([]byte, len(data))
+	copy(r.latestSnapshot, data)
+	r.opsLog = nil
+	slog.Info("snapshot stored", "room_id", r.ID, "bytes", len(data))
+}
+
+func (r *Room) AppendOp(data []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.latestSnapshot == nil {
+		return
+	}
+	cp := make([]byte, len(data))
+	copy(cp, data)
+	r.opsLog = append(r.opsLog, cp)
+}
+
+func (r *Room) ReplayTo(c *client.Client) bool {
+	r.mu.Lock()
+	snap := r.latestSnapshot
+	ops := make([][]byte, len(r.opsLog))
+	copy(ops, r.opsLog)
+	r.mu.Unlock()
+
+	if snap == nil {
+		slog.Debug("replay skipped: no snapshot available", "room_id", r.ID, "client_id", c.ID)
+		return false
+	}
+
+	if !c.Send(snap) {
+		slog.Warn("replay: failed to send snapshot to joiner", "room_id", r.ID, "client_id", c.ID)
+		return false
+	}
+	slog.Info("replay: snapshot sent to joiner", "room_id", r.ID, "client_id", c.ID, "snapshot_bytes", len(snap), "buffered_ops", len(ops))
+
+	for i, op := range ops {
+		if !c.Send(op) {
+			slog.Warn("replay: failed to send buffered op to joiner", "room_id", r.ID, "client_id", c.ID, "op_index", i)
+			break
+		}
+	}
+	return true
+}
+
 func (r *Room) Run() {
 	slog.Info("room loop started", "room_id", r.ID)
 	for {
@@ -87,7 +138,12 @@ func (r *Room) Run() {
 			slog.Info("room loop stopped", "room_id", r.ID)
 			return
 		case msg := <-r.ops:
-			r.broadcast(msg)
+			if wire.IsSnapshotFrame(msg.Data) {
+				r.StoreSnapshot(msg.Data)
+			} else {
+				r.AppendOp(msg.Data)
+				r.broadcast(msg)
+			}
 		}
 	}
 }
@@ -112,13 +168,13 @@ func (r *Room) BroadcastAll(data []byte) {
 
 func (r *Room) getPeers(exclude *client.Client) []*client.Client {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	targets := make([]*client.Client, 0, len(r.clients))
 	for c := range r.clients {
 		if exclude == nil || c != exclude {
 			targets = append(targets, c)
 		}
 	}
-	r.mu.Unlock()
 	return targets
 }
 
