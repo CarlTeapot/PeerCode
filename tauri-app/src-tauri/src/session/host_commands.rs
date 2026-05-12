@@ -73,8 +73,16 @@ pub async fn end_session(state: State<'_, AppState>, ws: State<'_, WsState>) -> 
             }
         }
     };
-    state.leave_session(&ws);
     destroy_room(local_room_url).await?;
+    state.leave_session(&ws);
+    let previous_role = {
+        let mut role = state.role.lock().unwrap();
+        let prev = role.clone();
+        *role = AppRole::Undecided;
+        prev
+    };
+    info!("role reset to idle from status={}", previous_role.status());
+
     info!("end_session completed: room_id={room_id}");
     Ok(())
 }
