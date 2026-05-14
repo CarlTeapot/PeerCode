@@ -81,9 +81,14 @@ pub fn run() {
                     };
                     (url, state.gateway_auth_token())
                 };
-                if let (Some(url), Some(token)) = (local_room_url, auth_token) {
-                    if let Err(e) = tauri::async_runtime::block_on(destroy_room(url, &token)) {
-                        warn!("destroy_room on window close: {e}");
+                if let Some(url) = local_room_url {
+                    match auth_token {
+                        Some(ref t) => {
+                            if let Err(e) = tauri::async_runtime::block_on(destroy_room(url, t)) {
+                                warn!("destroy_room on window close: {e}");
+                            }
+                        }
+                        None => warn!("destroy_room on window close: gateway token missing"),
                     }
                 }
                 state.leave_session(&window.state::<WsState>());

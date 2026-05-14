@@ -1,15 +1,11 @@
 use crate::app_config::config::AppConfig;
+use crate::gateway::auth_token_generator::generate_gateway_token;
 use crate::processes::types::{GatewayWorkflowResult, Sidecar, SidecarStatus};
 use crate::state::appstate::{AppRole, AppState};
 use log::{debug, info, warn};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
-
-fn generate_gateway_token() -> String {
-    use rand::distributions::{Alphanumeric, DistString};
-    Alphanumeric.sample_string(&mut rand::thread_rng(), 64)
-}
 
 pub async fn run_gateway(app: &AppHandle) -> Result<Option<GatewayWorkflowResult>, String> {
     info!("gateway startup requested");
@@ -23,7 +19,7 @@ pub async fn run_gateway(app: &AppHandle) -> Result<Option<GatewayWorkflowResult
         .sidecar("peercode-gateway")
         .map_err(|e| format!("Gateway sidecar not found: {e}"))?
         .env("GATEWAY_LOG_LEVEL", gateway_log_level)
-        .env("GATEWAY_AUTH_TOKEN", &gateway_token)
+        .env("GATEWAY_AUTH_TOKEN", gateway_token.clone())
         .spawn()
         .map_err(|e| format!("Failed to spawn gateway: {e}"))?;
 
@@ -37,11 +33,15 @@ pub async fn run_gateway(app: &AppHandle) -> Result<Option<GatewayWorkflowResult
             return Ok(None);
         }
         drop(role);
-        state.processes.lock().unwrap().gateway = Some(Sidecar {
-            proc: child,
-            name: "peercode-gateway".to_string(),
-            status: SidecarStatus::Enabled,
-        });
+        {
+            let mut procs = state.processes.lock().unwrap();
+            procs.gateway = Some(Sidecar {
+                proc: child,
+                name: "peercode-gateway".to_string(),
+                status: SidecarStatus::Enabled,
+            });
+            procs.gateway_auth_token = Some(gateway_token.clone());
+        }
         debug!("gateway process handle stored in app state");
     }
 

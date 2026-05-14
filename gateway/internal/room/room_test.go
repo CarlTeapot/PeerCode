@@ -1,6 +1,7 @@
 package room
 
 import (
+	"errors"
 	"log/slog"
 	"os"
 	"sync"
@@ -22,10 +23,10 @@ func TestRoom_JoinLeaveTriggersOnEmpty(t *testing.T) {
 	a := client.New("a", "room-1", "userA", false, nil)
 	b := client.New("b", "room-1", "userB", false, nil)
 	if err := r.Join(a); err != nil {
-		t.Fatalf("join a rejected: %v", err)
+		t.Fatalf("join a: %v", err)
 	}
 	if err := r.Join(b); err != nil {
-		t.Fatalf("join b rejected: %v", err)
+		t.Fatalf("join b: %v", err)
 	}
 	if got := r.Size(); got != 2 {
 		t.Fatalf("Size=%d, want 2", got)
@@ -50,7 +51,9 @@ func TestRoom_SendToEmptyIsNoop(t *testing.T) {
 	go func() { r.Run(); close(runDone) }()
 
 	a := client.New("a", "room-2", "userA", false, nil)
-	r.Join(a)
+	if err := r.Join(a); err != nil {
+		t.Fatalf("join: %v", err)
+	}
 
 	r.Ops() <- BroadcastMsg{Sender: a, Data: []byte{0x00, 0xDE, 0xAD}}
 	r.Ops() <- BroadcastMsg{Sender: a, Data: []byte{}}
@@ -69,7 +72,9 @@ func TestRoom_DoubleLeaveIsSilent(t *testing.T) {
 	go func() { r.Run(); close(runDone) }()
 
 	a := client.New("a", "room-3", "userA", false, nil)
-	r.Join(a)
+	if err := r.Join(a); err != nil {
+		t.Fatalf("join: %v", err)
+	}
 
 	calls := 0
 	r.Leave(a, func() { calls++ })
@@ -91,12 +96,14 @@ func TestRoom_JoinAfterCloseIsRejected(t *testing.T) {
 	go func() { r.Run(); close(runDone) }()
 
 	a := client.New("a", "room-4", "userA", false, nil)
-	r.Join(a)
+	if err := r.Join(a); err != nil {
+		t.Fatalf("join: %v", err)
+	}
 	r.Leave(a, nil)
 
 	b := client.New("b", "room-4", "userB", false, nil)
-	if err := r.Join(b); err == nil {
-		t.Fatal("Join succeeded on closed room")
+	if err := r.Join(b); !errors.Is(err, ErrRoomClosed) {
+		t.Fatalf("Join on closed room: got %v, want ErrRoomClosed", err)
 	}
 
 	<-runDone
@@ -108,7 +115,9 @@ func TestRoom_SnapshotReplayToJoiner(t *testing.T) {
 	go func() { r.Run(); close(runDone) }()
 
 	host := client.New("host", "room-snap", "hostUser", true, nil)
-	r.Join(host)
+	if err := r.Join(host); err != nil {
+		t.Fatalf("join host: %v", err)
+	}
 
 	snapFrame := []byte{0x01, 0xAA, 0xBB}
 	r.Ops() <- BroadcastMsg{Sender: host, Data: snapFrame}
@@ -121,7 +130,9 @@ func TestRoom_SnapshotReplayToJoiner(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	joiner := client.New("joiner", "room-snap", "joinerUser", false, nil)
-	r.Join(joiner)
+	if err := r.Join(joiner); err != nil {
+		t.Fatalf("join joiner: %v", err)
+	}
 
 	got := r.ReplayTo(joiner)
 	if !got {
@@ -150,5 +161,23 @@ done:
 
 	r.Leave(host, nil)
 	r.Leave(joiner, nil)
+	<-runDone
+}
+
+func TestRoom_DuplicateClientIDRejected(t *testing.T) {
+	r := New("room-dup")
+	runDone := make(chan struct{})
+	go func() { r.Run(); close(runDone) }()
+
+	a := client.New("same", "room-dup", "userA", false, nil)
+	b := client.New("same", "room-dup", "userB", false, nil)
+	if err := r.Join(a); err != nil {
+		t.Fatalf("first join: %v", err)
+	}
+	if err := r.Join(b); !errors.Is(err, ErrDuplicateClientID) {
+		t.Fatalf("second join: got %v, want ErrDuplicateClientID", err)
+	}
+
+	r.Leave(a, nil)
 	<-runDone
 }
