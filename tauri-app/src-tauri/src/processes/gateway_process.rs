@@ -6,15 +6,24 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
+fn generate_gateway_token() -> String {
+    use rand::distributions::{Alphanumeric, DistString};
+    Alphanumeric.sample_string(&mut rand::thread_rng(), 64)
+}
+
 pub async fn run_gateway(app: &AppHandle) -> Result<Option<GatewayWorkflowResult>, String> {
     info!("gateway startup requested");
     let gateway_log_level = app.state::<AppConfig>().logging.gateway_level_for_env();
     debug!("gateway startup using log level: {}", gateway_log_level);
+
+    let gateway_token = generate_gateway_token();
+
     let (mut rx, child) = app
         .shell()
         .sidecar("peercode-gateway")
         .map_err(|e| format!("Gateway sidecar not found: {e}"))?
         .env("GATEWAY_LOG_LEVEL", gateway_log_level)
+        .env("GATEWAY_AUTH_TOKEN", &gateway_token)
         .spawn()
         .map_err(|e| format!("Failed to spawn gateway: {e}"))?;
 
@@ -46,6 +55,7 @@ pub async fn run_gateway(app: &AppHandle) -> Result<Option<GatewayWorkflowResult
 
                     return Ok(Some(GatewayWorkflowResult {
                         lan_url: get_lan_url(port).await,
+                        gateway_auth_token: gateway_token,
                         port,
                         log_rx: rx,
                     }));

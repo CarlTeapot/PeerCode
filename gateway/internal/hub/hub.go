@@ -2,8 +2,10 @@ package hub
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -19,12 +21,13 @@ import (
 const stagingOpsBuffer = 64
 
 type Hub struct {
-	mu    sync.Mutex
-	rooms map[string]*room.Room
+	mu        sync.Mutex
+	rooms     map[string]*room.Room
+	authToken string
 }
 
-func New() *Hub {
-	return &Hub{rooms: make(map[string]*room.Room)}
+func New(authToken string) *Hub {
+	return &Hub{rooms: make(map[string]*room.Room), authToken: authToken}
 }
 
 func (h *Hub) newRoomID() string {
@@ -73,24 +76,37 @@ func (h *Hub) discardIfStale(id string, r *room.Room) {
 	}
 }
 
-func (h *Hub) register(c *client.Client) *room.Room {
+func (h *Hub) register(c *client.Client) (*room.Room, error) {
 	for {
 		r := h.getOrCreateRoom(c.RoomID)
-		if r.Join(c) {
+		err := r.Join(c)
+		if err == nil {
 			slog.Info(
 				"client registered to room",
 				"room_id", c.RoomID,
 				"client_id", c.ID,
 				"size", r.Size(),
 			)
-			return r
+			return r, nil
 		}
-		slog.Warn(
-			"room join failed; retrying after stale room cleanup",
-			"room_id", c.RoomID,
-			"client_id", c.ID,
-		)
-		h.discardIfStale(c.RoomID, r)
+		if errors.Is(err, room.ErrDuplicateClientID) {
+			slog.Warn(
+				"duplicate client_id; rejecting websocket",
+				"room_id", c.RoomID,
+				"client_id", c.ID,
+			)
+			return nil, err
+		}
+		if errors.Is(err, room.ErrRoomClosed) {
+			slog.Warn(
+				"room join failed; retrying after stale room cleanup",
+				"room_id", c.RoomID,
+				"client_id", c.ID,
+			)
+			h.discardIfStale(c.RoomID, r)
+			continue
+		}
+		return nil, err
 	}
 }
 
@@ -99,20 +115,29 @@ func (h *Hub) unregister(c *client.Client, r *room.Room) {
 	r.Leave(c, func() { h.discardIfStale(r.ID, r) })
 }
 
-func readWSParams(w http.ResponseWriter, r *http.Request) (roomID, clientID string, ok bool) {
-	roomID = r.URL.Query().Get("room")
+type wsParams struct {
+	roomID    string
+	clientID  string
+	username  string
+	hostToken string
+}
+
+func readWSParams(w http.ResponseWriter, r *http.Request) (wsParams, bool) {
+	roomID := r.URL.Query().Get("room")
 	if roomID == "" {
 		slog.Warn("websocket rejected: missing room parameter")
 		http.Error(w, "missing ?room= parameter", http.StatusBadRequest)
-		return "", "", false
+		return wsParams{}, false
 	}
-	clientID = r.URL.Query().Get("client_id")
+	clientID := r.URL.Query().Get("client_id")
 	if clientID == "" {
 		slog.Warn("websocket rejected: missing client_id parameter", "room_id", roomID)
 		http.Error(w, "missing ?client_id= parameter", http.StatusBadRequest)
-		return "", "", false
+		return wsParams{}, false
 	}
-	return roomID, clientID, true
+	username := r.URL.Query().Get("username")
+	hostToken := r.URL.Query().Get("host_token")
+	return wsParams{roomID: roomID, clientID: clientID, username: username, hostToken: hostToken}, true
 }
 
 func dispatchFrame(rm *room.Room, sender *client.Client, raw []byte) {
@@ -181,7 +206,7 @@ func (h *Hub) HandleEndSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
-	roomID, clientID, ok := readWSParams(w, r)
+	params, ok := readWSParams(w, r)
 	if !ok {
 		return
 	}
@@ -190,22 +215,34 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		InsecureSkipVerify: true,
 	})
 	if err != nil {
-		slog.Warn("websocket upgrade failed", "room_id", roomID, "error", err)
+		slog.Warn("websocket upgrade failed", "room_id", params.roomID, "error", err)
 		return
 	}
-	slog.Info("websocket upgraded", "room_id", roomID, "client_id", clientID)
+	slog.Info("websocket upgraded", "room_id", params.roomID, "client_id", params.clientID)
 
-	c := client.New(clientID, roomID, conn)
-	rm := h.register(c)
-	slog.Info("client joined room", "room_id", roomID, "client_id", clientID, "size", rm.Size())
+	isHost := params.hostToken != "" &&
+		subtle.ConstantTimeCompare([]byte(params.hostToken), []byte(h.authToken)) == 1
+
+	c := client.New(params.clientID, params.roomID, params.username, isHost, conn)
+	rm, err := h.register(c)
+	if err != nil {
+		if errors.Is(err, room.ErrDuplicateClientID) {
+			_ = conn.Close(websocket.StatusPolicyViolation, "duplicate client_id")
+		} else {
+			_ = conn.Close(websocket.StatusInternalError, "join failed")
+		}
+		return
+	}
+	slog.Info("client joined room", "room_id", params.roomID, "client_id", params.clientID, "is_host", isHost, "size", rm.Size())
 	defer func() {
 		h.unregister(c, rm)
-		slog.Info("client left room", "room_id", roomID, "client_id", clientID)
+		slog.Info("client left room", "room_id", params.roomID, "client_id", params.clientID)
 	}()
 
 	if rm.ReplayTo(c) {
-		slog.Info("snapshot replayed to joiner", "room_id", roomID, "client_id", clientID)
+		slog.Info("snapshot replayed to joiner", "room_id", params.roomID, "client_id", params.clientID)
 	}
+	rm.BroadcastRoomState()
 
 	ctx := r.Context()
 	ops := make(chan []byte, stagingOpsBuffer)
@@ -217,13 +254,13 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case raw := <-ops:
-			slog.Debug("received websocket frame from client", "room_id", roomID, "client_id", clientID, "bytes", len(raw))
+			slog.Debug("received websocket frame from client", "room_id", params.roomID, "client_id", params.clientID, "bytes", len(raw))
 			dispatchFrame(rm, c, raw)
 		case <-leave:
-			slog.Info("client signaled leave from read pump", "room_id", roomID, "client_id", clientID)
+			slog.Info("client signaled leave from read pump", "room_id", params.roomID, "client_id", params.clientID)
 			return
 		case <-ctx.Done():
-			slog.Info("websocket handler context cancelled", "room_id", roomID, "client_id", clientID, "error", ctx.Err())
+			slog.Info("websocket handler context cancelled", "room_id", params.roomID, "client_id", params.clientID, "error", ctx.Err())
 			return
 		}
 	}

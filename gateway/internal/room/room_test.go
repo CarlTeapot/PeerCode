@@ -19,10 +19,13 @@ func TestRoom_JoinLeaveTriggersOnEmpty(t *testing.T) {
 	runDone := make(chan struct{})
 	go func() { r.Run(); close(runDone) }()
 
-	a := client.New("a", "room-1", nil)
-	b := client.New("b", "room-1", nil)
-	if !r.Join(a) || !r.Join(b) {
-		t.Fatal("join rejected by fresh room")
+	a := client.New("a", "room-1", "userA", false, nil)
+	b := client.New("b", "room-1", "userB", false, nil)
+	if err := r.Join(a); err != nil {
+		t.Fatalf("join a rejected: %v", err)
+	}
+	if err := r.Join(b); err != nil {
+		t.Fatalf("join b rejected: %v", err)
 	}
 	if got := r.Size(); got != 2 {
 		t.Fatalf("Size=%d, want 2", got)
@@ -46,7 +49,7 @@ func TestRoom_SendToEmptyIsNoop(t *testing.T) {
 	runDone := make(chan struct{})
 	go func() { r.Run(); close(runDone) }()
 
-	a := client.New("a", "room-2", nil)
+	a := client.New("a", "room-2", "userA", false, nil)
 	r.Join(a)
 
 	r.Ops() <- BroadcastMsg{Sender: a, Data: []byte{0x00, 0xDE, 0xAD}}
@@ -65,7 +68,7 @@ func TestRoom_DoubleLeaveIsSilent(t *testing.T) {
 	runDone := make(chan struct{})
 	go func() { r.Run(); close(runDone) }()
 
-	a := client.New("a", "room-3", nil)
+	a := client.New("a", "room-3", "userA", false, nil)
 	r.Join(a)
 
 	calls := 0
@@ -87,12 +90,12 @@ func TestRoom_JoinAfterCloseIsRejected(t *testing.T) {
 	runDone := make(chan struct{})
 	go func() { r.Run(); close(runDone) }()
 
-	a := client.New("a", "room-4", nil)
+	a := client.New("a", "room-4", "userA", false, nil)
 	r.Join(a)
 	r.Leave(a, nil)
 
-	b := client.New("b", "room-4", nil)
-	if r.Join(b) {
+	b := client.New("b", "room-4", "userB", false, nil)
+	if err := r.Join(b); err == nil {
 		t.Fatal("Join succeeded on closed room")
 	}
 
@@ -104,7 +107,7 @@ func TestRoom_SnapshotReplayToJoiner(t *testing.T) {
 	runDone := make(chan struct{})
 	go func() { r.Run(); close(runDone) }()
 
-	host := client.New("host", "room-snap", nil)
+	host := client.New("host", "room-snap", "hostUser", true, nil)
 	r.Join(host)
 
 	snapFrame := []byte{0x01, 0xAA, 0xBB}
@@ -117,7 +120,7 @@ func TestRoom_SnapshotReplayToJoiner(t *testing.T) {
 	r.Ops() <- BroadcastMsg{Sender: host, Data: op2}
 	time.Sleep(50 * time.Millisecond)
 
-	joiner := client.New("joiner", "room-snap", nil)
+	joiner := client.New("joiner", "room-snap", "joinerUser", false, nil)
 	r.Join(joiner)
 
 	got := r.ReplayTo(joiner)

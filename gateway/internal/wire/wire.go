@@ -1,6 +1,7 @@
 package wire
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -12,7 +13,9 @@ const (
 )
 
 const (
-	ControlSessionEnded byte = 0x01
+	ControlSessionEnded     byte = 0x01
+	ControlRoomState        byte = 0x02
+	ControlPermissionChange byte = 0x03
 )
 
 func EncodeControlFrame(controlType byte) []byte {
@@ -29,11 +32,44 @@ func ValidateFrame(frame []byte) error {
 		return ErrEmptyFrame
 	}
 	switch frame[0] {
-	case PrefixOp, PrefixSnapshot:
+	case PrefixOp, PrefixSnapshot, PrefixControl:
 		return nil
 	default:
 		return fmt.Errorf("%w: 0x%02X", ErrUnknownPrefix, frame[0])
 	}
+}
+
+func IsControlFrame(frame []byte) bool {
+	return len(frame) >= 2 && frame[0] == PrefixControl
+}
+
+func ControlSubType(frame []byte) byte {
+	if len(frame) < 2 {
+		return 0
+	}
+	return frame[1]
+}
+
+func EncodeControlJSON(subType byte, payload any) ([]byte, error) {
+	jsonBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("wire: marshal control payload: %w", err)
+	}
+	frame := make([]byte, 2+len(jsonBytes))
+	frame[0] = PrefixControl
+	frame[1] = subType
+	copy(frame[2:], jsonBytes)
+	return frame, nil
+}
+
+func DecodeControlJSON(frame []byte, out any) error {
+	if len(frame) < 2 {
+		return ErrEmptyFrame
+	}
+	if frame[0] != PrefixControl {
+		return fmt.Errorf("wire: not a control frame")
+	}
+	return json.Unmarshal(frame[2:], out)
 }
 
 func DecodeOpFrame(frame []byte) ([]byte, error) {

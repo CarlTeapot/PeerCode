@@ -726,6 +726,8 @@ version = "0.1.0"
 dependencies = [
  "bitcode",
  "log",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

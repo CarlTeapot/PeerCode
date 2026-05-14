@@ -17,6 +17,8 @@ import (
 
 func main() {
 	level := parseGatewayLogLevel(os.Getenv("GATEWAY_LOG_LEVEL"))
+	authToken := os.Getenv("GATEWAY_AUTH_TOKEN")
+
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
 		Level: level,
 	}))
@@ -31,7 +33,7 @@ func main() {
 
 	port := ln.Addr().(*net.TCPAddr).Port
 
-	h := hub.New()
+	h := hub.New(authToken)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", h.HandleWS)

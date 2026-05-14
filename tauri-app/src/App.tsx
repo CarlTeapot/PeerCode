@@ -11,6 +11,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useRemoteChangeListener } from "./remoteChangeListener";
 import { useSnapshotListener } from "./snapshotListener";
+import { useRoomState } from "./useRoomState";
+import { PeersPanel } from "./PeersPanel";
 import {
   UsernameGate,
   overlayStyle,
@@ -273,6 +275,23 @@ function AppContent({ username }: AppContentProps) {
   const [sessionStatus, setSessionStatus] = useState<string>("loading");
   const sessionStatusRef = useRef(sessionStatus);
   sessionStatusRef.current = sessionStatus;
+
+  const { roomState, clearRoomState } = useRoomState();
+  const isHost = sessionStatus === "host";
+  const [canWrite, setCanWrite] = useState(true);
+
+  useEffect(() => {
+    const unlisten = listen<boolean>("session://can-write", (event) => {
+      setCanWrite(event.payload);
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  useEffect(() => {
+    editorRef.current?.updateOptions({ readOnly: !canWrite });
+  }, [canWrite]);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [sessionEndedBanner, setSessionEndedBanner] = useState(false);
   const [processesRunning, setProcessesRunning] = useState({
@@ -431,6 +450,8 @@ function AppContent({ username }: AppContentProps) {
             setSessionStatus("idle");
             setPublicUrl(null);
             setSessionEndedBanner(true);
+            clearRoomState();
+            setCanWrite(true);
             window.setTimeout(() => setSessionEndedBanner(false), 5000);
           });
         }),
@@ -438,7 +459,7 @@ function AppContent({ username }: AppContentProps) {
     })();
 
     return () => unlisten.forEach((fn) => fn());
-  }, []);
+  }, [clearRoomState]);
   // --- end session links ---
 
   useRemoteChangeListener({
@@ -828,6 +849,8 @@ function AppContent({ username }: AppContentProps) {
                 setSessionStatus("idle");
                 setLanUrl(null);
                 setPublicUrl(null);
+                clearRoomState();
+                setCanWrite(true);
               });
             }}
             style={{
@@ -854,6 +877,8 @@ function AppContent({ username }: AppContentProps) {
               void invoke("leave_session").then(() => {
                 setSessionStatus("idle");
                 setPublicUrl(null);
+                clearRoomState();
+                setCanWrite(true);
               });
             }}
             style={{
@@ -887,6 +912,7 @@ function AppContent({ username }: AppContentProps) {
             automaticLayout: true,
             minimap: { enabled: false },
             scrollBeyondLastLine: false,
+            readOnly: !canWrite,
           }}
         />
       </div>
@@ -925,6 +951,9 @@ function AppContent({ username }: AppContentProps) {
           onSuccess={() => void handleJoinSuccess()}
           onCancel={() => setShowJoinModal(false)}
         />
+      )}
+      {sessionStatus !== "idle" && sessionStatus !== "loading" && (
+        <PeersPanel roomState={roomState} isHost={isHost} />
       )}
     </>
   );

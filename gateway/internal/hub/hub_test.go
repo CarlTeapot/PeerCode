@@ -26,7 +26,7 @@ func init() {
 
 func newTestServer(t *testing.T) (*httptest.Server, *Hub) {
 	t.Helper()
-	h := New()
+	h := New("test-auth-token")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", h.HandleWS)
 	mux.HandleFunc("/rooms", h.HandleCreateRoom)
@@ -38,6 +38,21 @@ func newTestServer(t *testing.T) (*httptest.Server, *Hub) {
 func wsURL(base, room, clientID string) string {
 	return strings.Replace(base, "http://", "ws://", 1) +
 		"/ws?room=" + room + "&client_id=" + clientID
+}
+
+func drainRoomState(t *testing.T, conn *websocket.Conn, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, data, err := conn.Read(ctx)
+		cancel()
+		if err != nil {
+			t.Fatalf("drainRoomState[%d/%d]: expected room state frame but got error: %v", i+1, n, err)
+		}
+		if len(data) < 2 || data[0] != wire.PrefixControl || data[1] != wire.ControlRoomState {
+			t.Fatalf("drainRoomState[%d/%d]: expected room state control frame, got %x", i+1, n, data)
+		}
+	}
 }
 
 func dial(t *testing.T, url string) *websocket.Conn {
@@ -151,6 +166,9 @@ func TestHub_RoomsIsolated(t *testing.T) {
 	c := dial(t, wsURL(srv.URL, "y", "c"))
 	defer c.Close(websocket.StatusNormalClosure, "")
 
+	drainRoomState(t, a, 1)
+	drainRoomState(t, c, 1)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	if err := a.Write(ctx, websocket.MessageBinary, wire.EncodeOpFrame([]byte("hello"))); err != nil {
@@ -205,6 +223,8 @@ func TestHub_FanOut_SenderExcluded(t *testing.T) {
 	defer b.Close(websocket.StatusNormalClosure, "")
 
 	time.Sleep(50 * time.Millisecond)
+	drainRoomState(t, a, 2)
+	drainRoomState(t, b, 1)
 
 	ctx := context.Background()
 	payload := wire.EncodeOpFrame([]byte("hello"))
@@ -241,6 +261,9 @@ func TestHub_FanOut_ThreeClients(t *testing.T) {
 	defer c.Close(websocket.StatusNormalClosure, "")
 
 	time.Sleep(50 * time.Millisecond)
+	drainRoomState(t, a, 3)
+	drainRoomState(t, b, 2)
+	drainRoomState(t, c, 1)
 
 	ctx := context.Background()
 	payload := wire.EncodeOpFrame([]byte("broadcast"))
@@ -272,7 +295,7 @@ func TestHub_FanOut_ThreeClients(t *testing.T) {
 }
 
 func BenchmarkHub_FanOut_1000Ops(b *testing.B) {
-	h := New()
+	h := New("bench-auth-token")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", h.HandleWS)
 	srv := httptest.NewServer(mux)

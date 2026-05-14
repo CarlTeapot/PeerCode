@@ -2,11 +2,13 @@ use crate::gateway::types::{RoomResponse, GATEWAY_TIMEOUT};
 use log::{debug, warn};
 use url::Url;
 
-pub async fn create_room(port: u16) -> Result<String, String> {
+pub async fn create_room(port: u16, auth_token: &str) -> Result<String, String> {
     debug!("fetching gateway room id via /rooms: port={port}");
+    let token = format!("Bearer {auth_token}");
     tokio::time::timeout(GATEWAY_TIMEOUT, async {
         reqwest::Client::new()
             .post(format!("http://127.0.0.1:{port}/rooms"))
+            .header("Authorization", &token)
             .send()
             .await
             .map_err(|e| format!("gateway /rooms: {e}"))?
@@ -26,11 +28,13 @@ pub async fn create_room(port: u16) -> Result<String, String> {
     })?
 }
 
-pub async fn destroy_room(local_room_url: String) -> Result<(), String> {
+pub async fn destroy_room(local_room_url: String, auth_token: &str) -> Result<(), String> {
     let end_session_url = end_session_url_from_room_url(&local_room_url)?;
+    let token = format!("Bearer {auth_token}");
     tokio::time::timeout(GATEWAY_TIMEOUT, async {
         reqwest::Client::new()
             .post(&end_session_url)
+            .header("Authorization", &token)
             .send()
             .await
             .map_err(|e| {
