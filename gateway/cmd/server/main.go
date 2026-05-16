@@ -37,7 +37,7 @@ func main() {
 
 	port := ln.Addr().(*net.TCPAddr).Port
 
-	h := hub.New()
+	h := hub.New(authToken)
 
 	mux := http.NewServeMux()
 	if rpm := parseWSRateLimitRPM(); rpm > 0 {

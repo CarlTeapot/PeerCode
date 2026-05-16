@@ -26,6 +26,10 @@ pub async fn insert(
         base_seq
     );
 
+    if !state.can_write.load(Ordering::Relaxed) {
+        return Err("Write permission denied".into());
+    }
+
     let content_len = content.chars().count();
     let wire_block_opt = request_fallible(&state.doc_tx, |reply| DocOp::LocalInsert {
         position,
@@ -60,6 +64,10 @@ pub async fn delete(
         "crdt delete request: position={}, length={}, base_seq={}",
         position, length, base_seq
     );
+
+    if !state.can_write.load(Ordering::Relaxed) {
+        return Err("Write permission denied".into());
+    }
 
     let delete_set = request_fallible(&state.doc_tx, |reply| DocOp::LocalDelete {
         position,

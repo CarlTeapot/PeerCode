@@ -2,7 +2,7 @@ use crate::processes::types::Sidecar;
 use crate::state::document::DocSender;
 use crate::state::ws_state::WsState;
 use log::{info, warn};
-use std::sync::atomic::{AtomicBool, AtomicU32};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 
 pub struct AppState {
@@ -11,6 +11,7 @@ pub struct AppState {
     pub processes: Mutex<HostProcesses>,
     pub current_document_name: Mutex<Option<String>>,
     pub ops_since_snapshot: AtomicU32,
+    pub can_write: AtomicBool,
     #[cfg(debug_assertions)]
     pub crdt_logging_enabled: AtomicBool,
 }
@@ -65,6 +66,7 @@ impl AppState {
             }),
             current_document_name: Mutex::new(None),
             ops_since_snapshot: AtomicU32::new(0),
+            can_write: AtomicBool::new(true),
             #[cfg(debug_assertions)]
             crdt_logging_enabled: AtomicBool::new(false),
         }
@@ -72,9 +74,9 @@ impl AppState {
 
     pub fn leave_session(&self, ws: &WsState) {
         ws.disconnect_nowait();
+        self.can_write.store(true, Ordering::Relaxed);
     }
 
-    /// Bearer token for authenticated requests to the local gateway sidecar (`GATEWAY_AUTH_TOKEN`).
     pub fn gateway_auth_token(&self) -> Option<String> {
         self.processes.lock().unwrap().gateway_auth_token.clone()
     }

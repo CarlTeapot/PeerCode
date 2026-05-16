@@ -68,6 +68,13 @@ pub fn get_identity(app: AppHandle) -> Result<IdentityDto, String> {
     })
 }
 
+pub fn read_username(app: &AppHandle) -> String {
+    load_raw(app)
+        .ok()
+        .and_then(|id| id.username)
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 pub fn set_username(app: AppHandle, username: String) -> Result<(), String> {
     info!(

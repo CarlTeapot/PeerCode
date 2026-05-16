@@ -10,20 +10,24 @@ import (
 const sendBufferSize = 256
 
 type Client struct {
-	ID     string
-	RoomID string
-	conn   *websocket.Conn
-	send   chan []byte
+	ID       string
+	RoomID   string
+	Username string
+	IsHost   bool
+	conn     *websocket.Conn
+	send     chan []byte
 }
 
-func New(id, roomID string, conn *websocket.Conn) *Client {
+func New(id, roomID, username string, isHost bool, conn *websocket.Conn) *Client {
 	c := &Client{
-		ID:     id,
-		RoomID: roomID,
-		conn:   conn,
-		send:   make(chan []byte, sendBufferSize),
+		ID:       id,
+		RoomID:   roomID,
+		Username: username,
+		IsHost:   isHost,
+		conn:     conn,
+		send:     make(chan []byte, sendBufferSize),
 	}
-	slog.Info("client created", "room_id", roomID, "client_id", id, "send_buffer_size", sendBufferSize)
+	slog.Info("client created", "room_id", roomID, "client_id", id, "username", username, "is_host", isHost, "send_buffer_size", sendBufferSize)
 	return c
 }
 

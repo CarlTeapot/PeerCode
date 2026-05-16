@@ -1,3 +1,4 @@
+use crate::app_config::identity;
 use crate::gateway::gateway_api::{create_room, destroy_room};
 use crate::processes::process_coordinator;
 use crate::processes::types::SidecarStatus;
@@ -45,7 +46,7 @@ pub async fn host_session(app: AppHandle) -> Result<(), String> {
         setup.room_id, setup.port
     );
 
-    connect(app, setup.port, setup.room_id).await;
+    connect(app, setup.port, setup.room_id, setup.gateway_auth_token).await;
     info!("start_host_session completed");
     Ok(())
 }
@@ -111,6 +112,13 @@ fn ensure_gateway_spawn_allowed(app: &AppHandle) -> Result<(), String> {
 async fn prepare_host_session(app: &AppHandle) -> Result<HostSessionSetup, String> {
     info!("start_host_session launching gateway/tunnel workflow");
     let workflow = process_coordinator::launch(app.clone()).await?;
+
+    {
+        let state = app.state::<AppState>();
+        state.processes.lock().unwrap().gateway_auth_token =
+            Some(workflow.gateway_auth_token.clone());
+    }
+
     let room_id = create_room(workflow.port, &workflow.gateway_auth_token).await?;
     let local_room_url = format!("ws://127.0.0.1:{}/ws?room={}", workflow.port, room_id);
     let public_url = workflow.public_url;
@@ -121,6 +129,7 @@ async fn prepare_host_session(app: &AppHandle) -> Result<HostSessionSetup, Strin
     Ok(HostSessionSetup {
         room_id: room_id.clone(),
         port: workflow.port,
+        gateway_auth_token: workflow.gateway_auth_token,
         lan_url: workflow.lan_url,
         public_url,
         local_room_url,
@@ -162,7 +171,7 @@ fn rollback_starting_role(app: &AppHandle) {
     }
 }
 
-async fn connect(app: AppHandle, port: u16, room_id: String) {
+async fn connect(app: AppHandle, port: u16, room_id: String, gateway_auth_token: String) {
     debug!(
         "host local connect requested: room_id={} port={}",
         room_id, port
@@ -174,9 +183,11 @@ async fn connect(app: AppHandle, port: u16, room_id: String) {
             return;
         }
     };
+    let username = identity::read_username(&app);
 
-    let local_ws_url =
-        format!("ws://127.0.0.1:{port}/ws?room={room_id}&client_id={host_client_id}");
+    let local_ws_url = format!(
+        "ws://127.0.0.1:{port}/ws?room={room_id}&client_id={host_client_id}&username={username}&host_token={gateway_auth_token}"
+    );
     let ws = app.state::<WsState>();
     if let Err(e) = ws
         .connect(&local_ws_url, room_id.clone(), app.clone())
@@ -188,6 +199,9 @@ async fn connect(app: AppHandle, port: u16, room_id: String) {
             "local websocket connection established for host session: room_id={}",
             room_id
         );
+        app.state::<AppState>()
+            .can_write
+            .store(true, Ordering::Relaxed);
         send_initial_snapshot(&app).await;
     }
 }

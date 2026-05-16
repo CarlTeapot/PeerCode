@@ -73,15 +73,16 @@ pub fn run() {
             if let tauri::WindowEvent::Destroyed = event {
                 info!("window destroyed; tearing down host resources");
                 let state = window.state::<AppState>();
-                let local_room_url = {
+                let (local_room_url, auth_token) = {
                     let role = state.role.lock().unwrap();
-                    match &*role {
+                    let url = match &*role {
                         AppRole::Host { local_room_url, .. } => Some(local_room_url.clone()),
                         _ => None,
-                    }
+                    };
+                    (url, state.gateway_auth_token())
                 };
                 if let Some(url) = local_room_url {
-                    match state.gateway_auth_token() {
+                    match auth_token {
                         Some(ref t) => {
                             if let Err(e) = tauri::async_runtime::block_on(destroy_room(url, t)) {
                                 warn!("destroy_room on window close: {e}");
@@ -113,6 +114,7 @@ pub fn run() {
             session::guest_commands::parse_join_url,
             session::joint_commands::get_session_info,
             session::joint_commands::leave_session,
+            session::permission_commands::set_peer_permission,
             processes::commands::get_process_status,
             identity::get_identity,
             identity::set_username,

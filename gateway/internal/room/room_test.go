@@ -20,8 +20,8 @@ func TestRoom_JoinLeaveTriggersOnEmpty(t *testing.T) {
 	runDone := make(chan struct{})
 	go func() { r.Run(); close(runDone) }()
 
-	a := client.New("a", "room-1", nil)
-	b := client.New("b", "room-1", nil)
+	a := client.New("a", "room-1", "userA", false, nil)
+	b := client.New("b", "room-1", "userB", false, nil)
 	if err := r.Join(a); err != nil {
 		t.Fatalf("join a: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestRoom_SendToEmptyIsNoop(t *testing.T) {
 	runDone := make(chan struct{})
 	go func() { r.Run(); close(runDone) }()
 
-	a := client.New("a", "room-2", nil)
+	a := client.New("a", "room-2", "userA", false, nil)
 	if err := r.Join(a); err != nil {
 		t.Fatalf("join: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestRoom_DoubleLeaveIsSilent(t *testing.T) {
 	runDone := make(chan struct{})
 	go func() { r.Run(); close(runDone) }()
 
-	a := client.New("a", "room-3", nil)
+	a := client.New("a", "room-3", "userA", false, nil)
 	if err := r.Join(a); err != nil {
 		t.Fatalf("join: %v", err)
 	}
@@ -95,13 +95,13 @@ func TestRoom_JoinAfterCloseIsRejected(t *testing.T) {
 	runDone := make(chan struct{})
 	go func() { r.Run(); close(runDone) }()
 
-	a := client.New("a", "room-4", nil)
+	a := client.New("a", "room-4", "userA", false, nil)
 	if err := r.Join(a); err != nil {
 		t.Fatalf("join: %v", err)
 	}
 	r.Leave(a, nil)
 
-	b := client.New("b", "room-4", nil)
+	b := client.New("b", "room-4", "userB", false, nil)
 	if err := r.Join(b); !errors.Is(err, ErrRoomClosed) {
 		t.Fatalf("Join on closed room: got %v, want ErrRoomClosed", err)
 	}
@@ -114,7 +114,7 @@ func TestRoom_SnapshotReplayToJoiner(t *testing.T) {
 	runDone := make(chan struct{})
 	go func() { r.Run(); close(runDone) }()
 
-	host := client.New("host", "room-snap", nil)
+	host := client.New("host", "room-snap", "hostUser", true, nil)
 	if err := r.Join(host); err != nil {
 		t.Fatalf("join host: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestRoom_SnapshotReplayToJoiner(t *testing.T) {
 	r.Ops() <- BroadcastMsg{Sender: host, Data: op2}
 	time.Sleep(50 * time.Millisecond)
 
-	joiner := client.New("joiner", "room-snap", nil)
+	joiner := client.New("joiner", "room-snap", "joinerUser", false, nil)
 	if err := r.Join(joiner); err != nil {
 		t.Fatalf("join joiner: %v", err)
 	}
@@ -169,8 +169,8 @@ func TestRoom_DuplicateClientIDRejected(t *testing.T) {
 	runDone := make(chan struct{})
 	go func() { r.Run(); close(runDone) }()
 
-	a := client.New("same", "room-dup", nil)
-	b := client.New("same", "room-dup", nil)
+	a := client.New("same", "room-dup", "userA", false, nil)
+	b := client.New("same", "room-dup", "userB", false, nil)
 	if err := r.Join(a); err != nil {
 		t.Fatalf("first join: %v", err)
 	}

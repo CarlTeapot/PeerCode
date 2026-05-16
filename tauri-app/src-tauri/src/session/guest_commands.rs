@@ -1,3 +1,4 @@
+use crate::app_config::identity;
 use crate::session::session_types::JoinInfo;
 use crate::state::appstate::{AppRole, AppState};
 use crate::state::document::{request, DocOp};
@@ -39,9 +40,10 @@ pub async fn join_session(
         })?
         .value;
 
+    let username = identity::read_username(&app);
     let ws_url = format!(
-        "{}/ws?room={}&client_id={}",
-        join_info.server_url, join_info.room_id, guest_client_id
+        "{}/ws?room={}&client_id={}&username={}",
+        join_info.server_url, join_info.room_id, guest_client_id, username
     );
     debug!(
         "join_session attempting websocket connect: room_id={} client_id={}",
