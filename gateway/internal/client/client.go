@@ -77,7 +77,11 @@ func (c *Client) ReadPump(ctx context.Context, ops chan<- []byte, leave chan<- *
 	for {
 		_, data, err := c.conn.Read(ctx)
 		if err != nil {
-			slog.Debug("read pump stopped", "room_id", c.RoomID, "client_id", c.ID, "error", err)
+			slog.Warn("read pump: connection read error; closing",
+				"room_id", c.RoomID,
+				"client_id", c.ID,
+				"error", err,
+			)
 			return
 		}
 		select {
@@ -106,7 +110,12 @@ func (c *Client) WritePump(ctx context.Context) {
 				return
 			}
 			if err := c.conn.Write(ctx, websocket.MessageBinary, msg); err != nil {
-				slog.Debug("write pump stopped", "room_id", c.RoomID, "client_id", c.ID, "error", err)
+				slog.Warn("write pump: connection write error; closing",
+					"room_id", c.RoomID,
+					"client_id", c.ID,
+					"frame_bytes", len(msg),
+					"error", err,
+				)
 				return
 			}
 			slog.Debug("write pump sent frame", "room_id", c.RoomID, "client_id", c.ID, "bytes", len(msg))
