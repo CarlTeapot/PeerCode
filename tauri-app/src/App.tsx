@@ -193,14 +193,22 @@ function installPlainTextPasteHandler(
   if (!domNode) return;
 
   const handlePaste = (event: ClipboardEvent) => {
-    const text = event.clipboardData?.getData("text/plain") ?? "";
     event.preventDefault();
     event.stopPropagation();
 
-    if (!text) return;
+    const text = event.clipboardData?.getData("text/plain") ?? "";
 
-    editorInstance.focus();
-    editorInstance.trigger("plain-text-paste", "type", { text });
+    if (text) {
+      editorInstance.focus();
+      editorInstance.trigger("plain-text-paste", "type", { text });
+      return;
+    }
+
+    void navigator.clipboard.readText().then((clipText) => {
+      if (!clipText) return;
+      editorInstance.focus();
+      editorInstance.trigger("plain-text-paste", "type", { text: clipText });
+    });
   };
 
   domNode.addEventListener("paste", handlePaste, { capture: true });
@@ -367,11 +375,22 @@ function AppContent({ username }: AppContentProps) {
       public_url: string | null;
       local_room_url: string | null;
       public_room_url: string | null;
+      room_id: string | null;
     }>("get_session_info").then((info) => {
       setSessionStatus(info.status);
-      if (info.local_room_url ?? info.lan_url) {
-        setLanUrl(info.local_room_url ?? info.lan_url);
+
+      if (info.lan_url && !info.room_id) {
+        throw new Error(
+          "get_session_info: lan_url present but room_id is null",
+        );
       }
+
+      const lanRoomUrl =
+        info.lan_url && info.room_id
+          ? `${info.lan_url}?room=${info.room_id}`
+          : null;
+
+      if (lanRoomUrl) setLanUrl(lanRoomUrl);
       if (info.public_room_url ?? info.public_url) {
         setPublicUrl(info.public_room_url ?? info.public_url);
       }
@@ -393,7 +412,11 @@ function AppContent({ username }: AppContentProps) {
           room_id: string;
         }>("session://session-ready", (e) => {
           setSessionStatus("host");
-          setLanUrl(e.payload.local_room_url);
+          setLanUrl(
+            e.payload.lan_url
+              ? `${e.payload.lan_url}?room=${e.payload.room_id}`
+              : e.payload.local_room_url,
+          );
           setPublicUrl(e.payload.public_room_url);
           setProcessesRunning({
             gateway: "Enabled",

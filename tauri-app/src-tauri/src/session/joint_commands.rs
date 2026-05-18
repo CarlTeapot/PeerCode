@@ -50,6 +50,15 @@ pub fn get_session_info(state: State<'_, AppState>) -> SessionInfo {
 pub fn leave_session(state: State<'_, AppState>, ws: State<'_, WsState>) -> Result<(), String> {
     info!("leave session requested");
     state.leave_session(&ws);
+    {
+        let mut role = state.role.lock().unwrap();
+        let prev = role.clone();
+        *role = AppRole::Undecided;
+        info!(
+            "leave_session: role reset to idle from status={}",
+            prev.status()
+        );
+    }
     info!("leave session completed");
     Ok(())
 }

@@ -35,7 +35,9 @@ func clientIPForWSRateLimit(r *http.Request) string {
 
 func newWSRateLimiter(rpm int) *limiter.Limiter {
 	max := float64(rpm) / 60.0
-	return tollbooth.NewLimiter(max, nil)
+	lmt := tollbooth.NewLimiter(max, nil)
+	lmt.SetBurst(10)
+	return lmt
 }
 
 func wsRateLimitMiddleware(lmt *limiter.Limiter, next http.HandlerFunc) http.Handler {

@@ -20,6 +20,12 @@ import (
 const stagingOpsBuffer = 64
 const maxRoomJoinRetries = 3
 
+// maxInboundMessageBytes caps the size of a single incoming WebSocket frame.
+// The coder/websocket default is 32 KiB which is easily exceeded by a large
+// paste or full-document snapshot. 64 MiB is far above any realistic payload
+// while still preventing unbounded memory growth from a malicious sender.
+const maxInboundMessageBytes = 64 * 1024 * 1024
+
 type Hub struct {
 	mu    sync.Mutex
 	rooms map[string]*room.Room
@@ -215,6 +221,7 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("websocket upgrade failed", "room_id", roomID, "error", err)
 		return
 	}
+	conn.SetReadLimit(maxInboundMessageBytes)
 	slog.Info("websocket upgraded", "room_id", roomID, "client_id", clientID)
 
 	c := client.New(clientID, roomID, conn)
