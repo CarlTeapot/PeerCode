@@ -1,15 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { createEnqueueOp, createIpcSenders } from "../opQueue";
 
-// Regression test for docs/frontend-rendering-issues.md §Issue 1.
-//
-// `sendInsert` / `sendDelete` must accept `baseSeq` as a parameter (captured
-// synchronously at the Monaco event), not read it from a ref *inside* the
-// chained-promise callback. Otherwise a remote op that lands between enqueue
-// and task execution will bump the ref and the queued IPC will fire with a
-// post-bump value — `position` was captured at keystroke time but `baseSeq`
-// would describe a later document state.
-
 function defer<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((r) => {
@@ -25,18 +16,10 @@ describe("IPC senders preserve caller-supplied baseSeq", () => {
     const enqueueOp = createEnqueueOp(opChainRef);
     const { sendInsert } = createIpcSenders(enqueueOp, invoke);
 
-    // A prior IPC is already in flight, blocking the chain.
     const slow = defer<void>();
     enqueueOp(() => slow.promise);
 
-    // Caller (Monaco event handler) captures baseSeq=0 synchronously, then
-    // enqueues the keystroke.
     const sendPromise = sendInsert(10, "A", 0);
-
-    // While the keystroke's IPC is queued, a remote op arrives and bumps
-    // any external state the caller might have read. Because baseSeq is a
-    // parameter — captured at enqueue time — what `invoke` sees is unaffected.
-    /* simulated remote-op bump would go here */
 
     slow.resolve();
     await sendPromise;
