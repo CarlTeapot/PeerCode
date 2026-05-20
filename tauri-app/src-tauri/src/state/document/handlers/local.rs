@@ -10,6 +10,7 @@ pub fn handle_local_insert(
     position: u64,
     content: &str,
     base_seq: u64,
+    local_seq: u64,
 ) -> Result<Option<WireBlock>, String> {
     let transformed = state.op_log.transform(position, base_seq);
     if transformed != position {
@@ -18,7 +19,11 @@ pub fn handle_local_insert(
             position, transformed, base_seq
         );
     }
-    insert_with_clamp(state, transformed, content)
+    let result = insert_with_clamp(state, transformed, content);
+    if result.is_ok() {
+        state.last_local_seq_applied = local_seq;
+    }
+    result
 }
 
 pub fn handle_local_delete(
@@ -26,6 +31,7 @@ pub fn handle_local_delete(
     position: u64,
     length: u64,
     base_seq: u64,
+    local_seq: u64,
 ) -> Result<DeleteSet, String> {
     let transformed = state.op_log.transform(position, base_seq);
     if transformed != position {
@@ -34,7 +40,11 @@ pub fn handle_local_delete(
             position, transformed, base_seq
         );
     }
-    delete_with_clamp(state, transformed, length)
+    let result = delete_with_clamp(state, transformed, length);
+    if result.is_ok() {
+        state.last_local_seq_applied = local_seq;
+    }
+    result
 }
 
 pub fn handle_local_replace(
@@ -43,6 +53,7 @@ pub fn handle_local_replace(
     delete_length: u64,
     content: &str,
     base_seq: u64,
+    local_seq: u64,
 ) -> Result<(DeleteSet, Option<WireBlock>), String> {
     let transformed = state.op_log.transform(position, base_seq);
     if transformed != position {
@@ -53,6 +64,7 @@ pub fn handle_local_replace(
     }
     let delete_set = delete_with_clamp(state, transformed, delete_length)?;
     let wire = insert_with_clamp(state, transformed, content)?;
+    state.last_local_seq_applied = local_seq;
     Ok((delete_set, wire))
 }
 

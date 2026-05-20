@@ -7,10 +7,23 @@ import {
 import type { editor } from "monaco-editor";
 import type { Monaco } from "@monaco-editor/react";
 import { listen } from "@tauri-apps/api/event";
+import type { PendingOpStore } from "./opQueue";
 
 type RemoteChangeEvent =
-  | { type: "insert"; seq: number; position: number; content: string }
-  | { type: "delete"; seq: number; position: number; length: number };
+  | {
+      type: "insert";
+      seq: number;
+      last_local_seq: number;
+      position: number;
+      content: string;
+    }
+  | {
+      type: "delete";
+      seq: number;
+      last_local_seq: number;
+      position: number;
+      length: number;
+    };
 
 interface LogEntry {
   id: number;
@@ -26,6 +39,7 @@ interface UseRemoteChangeListenerArgs {
   eventCountRef: MutableRefObject<number>;
   setEventLog: Dispatch<SetStateAction<LogEntry[]>>;
   lastAppliedSeqRef: MutableRefObject<number>;
+  pendingStore: PendingOpStore;
 }
 
 export function useRemoteChangeListener({
@@ -35,6 +49,7 @@ export function useRemoteChangeListener({
   eventCountRef,
   setEventLog,
   lastAppliedSeqRef,
+  pendingStore,
 }: UseRemoteChangeListenerArgs) {
   useEffect(() => {
     const unlistens: Array<() => void> = [];
@@ -42,6 +57,7 @@ export function useRemoteChangeListener({
 
     listen<void>("crdt://document-reset", () => {
       lastAppliedSeqRef.current = 0;
+      pendingStore.reset();
     }).then((fn) => {
       if (cancelled) fn();
       else unlistens.push(fn);
@@ -56,10 +72,14 @@ export function useRemoteChangeListener({
       if (!model) return;
 
       const change = e.payload;
+
+      pendingStore.pruneAtMost(change.last_local_seq);
+
       isApplyingRemote.current = true;
       try {
         if (change.type === "insert") {
-          const pos = model.getPositionAt(change.position);
+          const startOffset = pendingStore.transform(change.position);
+          const pos = model.getPositionAt(startOffset);
           ed.executeEdits("remote", [
             {
               range: new mn.Range(
@@ -84,8 +104,12 @@ export function useRemoteChangeListener({
             },
           ]);
         } else {
-          const startPos = model.getPositionAt(change.position);
-          const endPos = model.getPositionAt(change.position + change.length);
+          const startOffset = pendingStore.transform(change.position);
+          const endOffset = pendingStore.transform(
+            change.position + change.length,
+          );
+          const startPos = model.getPositionAt(startOffset);
+          const endPos = model.getPositionAt(endOffset);
           ed.executeEdits("remote", [
             {
               range: new mn.Range(
@@ -134,5 +158,6 @@ export function useRemoteChangeListener({
     eventCountRef,
     setEventLog,
     lastAppliedSeqRef,
+    pendingStore,
   ]);
 }

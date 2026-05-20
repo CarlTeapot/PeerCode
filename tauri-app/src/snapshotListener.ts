@@ -6,6 +6,7 @@ import {
 } from "react";
 import type { editor } from "monaco-editor";
 import { listen } from "@tauri-apps/api/event";
+import type { PendingOpStore } from "./opQueue";
 
 interface LogEntry {
   id: number;
@@ -19,6 +20,7 @@ interface UseSnapshotListenerArgs {
   isApplyingRemote: MutableRefObject<boolean>;
   eventCountRef: MutableRefObject<number>;
   setEventLog: Dispatch<SetStateAction<LogEntry[]>>;
+  pendingStore: PendingOpStore;
 }
 
 export function useSnapshotListener({
@@ -26,6 +28,7 @@ export function useSnapshotListener({
   isApplyingRemote,
   eventCountRef,
   setEventLog,
+  pendingStore,
 }: UseSnapshotListenerArgs) {
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -41,6 +44,7 @@ export function useSnapshotListener({
       } finally {
         isApplyingRemote.current = false;
       }
+      pendingStore.reset();
 
       const count = ++eventCountRef.current;
       setEventLog((prev) => [
@@ -67,5 +71,5 @@ export function useSnapshotListener({
         unlisten = null;
       }
     };
-  }, [editorRef, isApplyingRemote, eventCountRef, setEventLog]);
+  }, [editorRef, isApplyingRemote, eventCountRef, setEventLog, pendingStore]);
 }

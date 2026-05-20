@@ -45,20 +45,32 @@ impl DocActor {
                 position,
                 content,
                 base_seq,
+                local_seq,
                 reply,
             } => {
-                let result =
-                    local::handle_local_insert(&mut self.state, position, &content, base_seq);
+                let result = local::handle_local_insert(
+                    &mut self.state,
+                    position,
+                    &content,
+                    base_seq,
+                    local_seq,
+                );
                 let _ = reply.send(result);
             }
             DocOp::LocalDelete {
                 position,
                 length,
                 base_seq,
+                local_seq,
                 reply,
             } => {
-                let result =
-                    local::handle_local_delete(&mut self.state, position, length, base_seq);
+                let result = local::handle_local_delete(
+                    &mut self.state,
+                    position,
+                    length,
+                    base_seq,
+                    local_seq,
+                );
                 let _ = reply.send(result);
             }
             DocOp::LocalReplace {
@@ -66,6 +78,7 @@ impl DocActor {
                 delete_length,
                 content,
                 base_seq,
+                local_seq,
                 reply,
             } => {
                 let result = local::handle_local_replace(
@@ -74,6 +87,7 @@ impl DocActor {
                     delete_length,
                     &content,
                     base_seq,
+                    local_seq,
                 );
                 let _ = reply.send(result);
             }

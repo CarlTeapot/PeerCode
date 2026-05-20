@@ -12,7 +12,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useRemoteChangeListener } from "./remoteChangeListener";
 import { useSnapshotListener } from "./snapshotListener";
-import { createEnqueueOp, createIpcSenders } from "./opQueue";
+import {
+  createEnqueueOp,
+  createIpcSenders,
+  createPendingOpStore,
+} from "./opQueue";
 import {
   UsernameGate,
   overlayStyle,
@@ -251,9 +255,10 @@ function AppContent({ username }: AppContentProps) {
   const opChainRef = useRef<Promise<unknown>>(Promise.resolve());
 
   const enqueueOp = useMemo(() => createEnqueueOp(opChainRef), []);
+  const pendingStore = useMemo(() => createPendingOpStore(), []);
   const { sendInsert, sendDelete, sendReplace } = useMemo(
-    () => createIpcSenders(enqueueOp),
-    [enqueueOp],
+    () => createIpcSenders(enqueueOp, pendingStore),
+    [enqueueOp, pendingStore],
   );
 
   const handleDocumentLoaded = useCallback((text: string, name: string) => {
@@ -527,6 +532,7 @@ function AppContent({ username }: AppContentProps) {
     eventCountRef,
     setEventLog,
     lastAppliedSeqRef,
+    pendingStore,
   });
 
   useSnapshotListener({
@@ -534,6 +540,7 @@ function AppContent({ username }: AppContentProps) {
     isApplyingRemote,
     eventCountRef,
     setEventLog,
+    pendingStore,
   });
 
   const [loggingEnabled, setLoggingEnabled] = useState(false);
