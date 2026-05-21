@@ -1,6 +1,6 @@
 use crate::app_config::config::AppConfig;
 use crate::processes::types::{Sidecar, SidecarStatus, TunnelWorkflowResult};
-use crate::state::appstate::{AppRole, AppState};
+use crate::state::appstate::AppState;
 use log::{debug, info, warn};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_shell::process::CommandEvent;
@@ -60,10 +60,7 @@ pub async fn run_cloudflared(
         }
     }
 
-    let is_host = matches!(
-        *app.state::<AppState>().role.lock().unwrap(),
-        AppRole::Host { .. }
-    );
+    let is_host = app.state::<AppState>().is_host();
     if is_host {
         warn!("cloudflared exited without producing a tunnel URL while host role is active");
         Err("cloudflared exited without producing a tunnel URL".into())
@@ -84,16 +81,5 @@ fn extract_tunnel_url(line: &str) -> Option<String> {
 }
 
 fn store_public_url(app: &AppHandle, url: &str) {
-    let state = app.state::<AppState>();
-    let mut role = state.role.lock().unwrap();
-    if let AppRole::Host {
-        public_url: ref mut stored,
-        ..
-    } = *role
-    {
-        *stored = Some(url.to_string());
-        info!("host public URL stored from cloudflared");
-    } else {
-        warn!("cloudflared public URL ignored because role is not Host");
-    }
+    app.state::<AppState>().store_public_url(url.to_string());
 }

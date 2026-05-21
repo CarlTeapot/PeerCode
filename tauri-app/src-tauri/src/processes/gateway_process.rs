@@ -25,14 +25,13 @@ pub async fn run_gateway(app: &AppHandle) -> Result<Option<GatewayWorkflowResult
 
     {
         let state = app.state::<AppState>();
-        let role = state.role.lock().unwrap();
+        let role = state.current_role();
         debug!("gateway start requested while role={}", role.status());
-        if !matches!(*role, AppRole::Starting) {
+        if !matches!(role, AppRole::Starting) {
             warn!("gateway startup cancelled: role changed before registration");
             let _ = child.kill();
             return Ok(None);
         }
-        drop(role);
         {
             let mut procs = state.processes.lock().unwrap();
             procs.gateway = Some(Sidecar {
@@ -64,10 +63,7 @@ pub async fn run_gateway(app: &AppHandle) -> Result<Option<GatewayWorkflowResult
         }
     }
 
-    let still_starting = matches!(
-        *app.state::<AppState>().role.lock().unwrap(),
-        AppRole::Starting
-    );
+    let still_starting = matches!(app.state::<AppState>().current_role(), AppRole::Starting);
     if still_starting {
         warn!("gateway exited before reporting port while session still starting");
         Err("Gateway exited before reporting its port".into())

@@ -2,21 +2,20 @@ use crdt_core::wire::{CONTROL_SESSION_ENDED, PREFIX_CONTROL};
 use futures_util::StreamExt;
 use log::{debug, info, warn};
 use std::sync::{Arc, RwLock};
-use tauri::{AppHandle, Emitter};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::session::session_types::{SessionEndedPayload, SESSION_ENDED};
-use crate::ws_management::ws_types::{Stream, WsConnection};
+use crate::ws_management::ws_types::{DisconnectReason, Stream, WsConnection};
 
 pub async fn receive_loop(
     mut stream: Stream,
     connection: Arc<Mutex<WsConnection>>,
     write_tx: Arc<RwLock<Option<Arc<mpsc::Sender<Message>>>>>,
     op_tx: mpsc::UnboundedSender<Vec<u8>>,
-    app: AppHandle,
+    disconnect_tx: oneshot::Sender<DisconnectReason>,
 ) {
     info!("ws receiver loop started");
+    let mut reason = DisconnectReason::ConnectionLost;
     while let Some(result) = stream.next().await {
         match result {
             Ok(Message::Text(text)) => {
@@ -27,7 +26,7 @@ pub async fn receive_loop(
                     match bytes.get(1).copied() {
                         Some(CONTROL_SESSION_ENDED) => {
                             info!("ws recv: session ended by host");
-                            let _ = app.emit(SESSION_ENDED, SessionEndedPayload {});
+                            reason = DisconnectReason::SessionEnded;
                             break;
                         }
                         other => {
@@ -60,11 +59,21 @@ pub async fn receive_loop(
         }
     }
 
-    let mut guard = connection.lock().await;
-    if matches!(*guard, WsConnection::Connected { .. }) {
-        *write_tx.write().unwrap() = None;
-        *guard = WsConnection::Disconnected;
-        warn!("ws recv connection lost; state reset to Disconnected");
+    {
+        let mut guard = connection.lock().await;
+        if matches!(*guard, WsConnection::Connected { .. }) {
+            *write_tx.write().unwrap() = None;
+            *guard = WsConnection::Disconnected;
+            match reason {
+                DisconnectReason::SessionEnded => {
+                    info!("ws recv: connection closed after session ended")
+                }
+                DisconnectReason::ConnectionLost => {
+                    warn!("ws recv: connection lost; state reset to Disconnected")
+                }
+            }
+        }
     }
+    let _ = disconnect_tx.send(reason);
     info!("ws recv loop stopped");
 }

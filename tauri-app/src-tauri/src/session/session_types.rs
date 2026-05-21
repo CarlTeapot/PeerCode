@@ -1,9 +1,17 @@
 pub const SESSION_READY: &str = "session://session-ready";
 pub const SESSION_ERROR: &str = "session://session-error";
 pub const SESSION_ENDED: &str = "session://session-ended";
+pub const SESSION_DISCONNECTED: &str = "session://disconnected";
+pub const PROCESSES_STOPPED: &str = "session://processes-stopped";
+
+#[derive(Clone, serde::Serialize)]
+pub struct ProcessesStoppedPayload {}
 
 #[derive(Clone, serde::Serialize)]
 pub struct SessionEndedPayload {}
+
+#[derive(Clone, serde::Serialize)]
+pub struct SessionDisconnectedPayload {}
 
 #[derive(Clone, serde::Serialize)]
 pub struct SessionReadyPayload {

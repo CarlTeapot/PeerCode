@@ -24,6 +24,26 @@ import {
 import { FileMenu } from "./FileMenu";
 import "./App.css";
 
+type SessionNotice = "ended" | "disconnected";
+
+const SESSION_NOTICE: Record<
+  SessionNotice,
+  { background: string; border: string; color: string; message: string }
+> = {
+  ended: {
+    background: "#2a1a0a",
+    border: "#e67e22",
+    color: "#e67e22",
+    message: "⚠ The host ended the session. Your document is preserved.",
+  },
+  disconnected: {
+    background: "#2a0a0a",
+    border: "#e74c3c",
+    color: "#e74c3c",
+    message: "⚠ Connection lost. Your document is preserved locally.",
+  },
+};
+
 interface LogEntry {
   id: number;
   operationClass: string;
@@ -266,7 +286,10 @@ function AppContent({ username }: AppContentProps) {
   const sessionStatusRef = useRef(sessionStatus);
   sessionStatusRef.current = sessionStatus;
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
-  const [sessionEndedBanner, setSessionEndedBanner] = useState(false);
+  const [sessionNotice, setSessionNotice] = useState<SessionNotice | null>(
+    null,
+  );
+  const sessionNoticeTimerRef = useRef<number | null>(null);
   const [processesRunning, setProcessesRunning] = useState({
     gateway: "Disabled" as "Enabled" | "Disabled",
     tunnel: "Disabled" as "Enabled" | "Disabled",
@@ -357,6 +380,35 @@ function AppContent({ username }: AppContentProps) {
     }
   }, []);
 
+  const applyIdleSessionState = useCallback(() => {
+    setSessionStatus("idle");
+    setLanUrl(null);
+    setPublicUrl(null);
+    setProcessesRunning({ gateway: "Disabled", tunnel: "Disabled" });
+    setSessionBusy(false);
+  }, []);
+
+  const showSessionNotice = useCallback((notice: SessionNotice) => {
+    if (sessionNoticeTimerRef.current !== null) {
+      window.clearTimeout(sessionNoticeTimerRef.current);
+    }
+    setSessionNotice(notice);
+    sessionNoticeTimerRef.current = window.setTimeout(() => {
+      setSessionNotice(null);
+      sessionNoticeTimerRef.current = null;
+    }, 5000);
+  }, []);
+
+  const handleRemoteSessionExit = useCallback(
+    (notice: SessionNotice, allowedRoles: readonly string[]) => {
+      if (!allowedRoles.includes(sessionStatusRef.current)) return;
+      // Backend disconnect_handler already reset role/WS before emitting.
+      applyIdleSessionState();
+      showSessionNotice(notice);
+    },
+    [applyIdleSessionState, showSessionNotice],
+  );
+
   const copyUrl = async (label: string, url: string) => {
     try {
       await navigator.clipboard.writeText(url);
@@ -399,10 +451,19 @@ function AppContent({ username }: AppContentProps) {
     invoke<{ gateway: "Enabled" | "Disabled"; tunnel: "Enabled" | "Disabled" }>(
       "get_process_status",
     ).then((s) => setProcessesRunning(s));
+  }, []);
 
+  useEffect(() => {
     const unlisten: (() => void)[] = [];
+    let cancelled = false;
+
     (async () => {
-      unlisten.push(
+      const register = (fn: () => void) => {
+        if (cancelled) fn();
+        else unlisten.push(fn);
+      };
+
+      await register(
         await listen<{
           lan_url: string | null;
           public_url: string | null;
@@ -424,28 +485,39 @@ function AppContent({ username }: AppContentProps) {
           });
         }),
       );
-      unlisten.push(
+      await register(
         await listen<{ message: string }>("session://session-error", (e) => {
           setSessionStatus("error: " + e.payload.message);
           setProcessesRunning({ gateway: "Disabled", tunnel: "Disabled" });
         }),
       );
-      unlisten.push(
+      await register(
+        await listen("session://processes-stopped", () => {
+          setProcessesRunning({ gateway: "Disabled", tunnel: "Disabled" });
+        }),
+      );
+      await register(
         await listen("session://session-ended", () => {
           // Guests only: the gateway may echo end-session to the host too.
-          if (sessionStatusRef.current !== "guest") return;
-          void invoke("leave_session").then(() => {
-            setSessionStatus("idle");
-            setPublicUrl(null);
-            setSessionEndedBanner(true);
-            window.setTimeout(() => setSessionEndedBanner(false), 5000);
-          });
+          handleRemoteSessionExit("ended", ["guest"]);
+        }),
+      );
+      await register(
+        await listen("session://disconnected", () => {
+          handleRemoteSessionExit("disconnected", ["host", "guest"]);
         }),
       );
     })();
 
-    return () => unlisten.forEach((fn) => fn());
-  }, []);
+    return () => {
+      cancelled = true;
+      unlisten.forEach((fn) => fn());
+      if (sessionNoticeTimerRef.current !== null) {
+        window.clearTimeout(sessionNoticeTimerRef.current);
+        sessionNoticeTimerRef.current = null;
+      }
+    };
+  }, [handleRemoteSessionExit]);
   // --- end session links ---
 
   useRemoteChangeListener({
@@ -814,30 +886,33 @@ function AppContent({ username }: AppContentProps) {
             )}
           </div>
         )}
-        {sessionEndedBanner && (
+        {sessionNotice && (
           <div
             style={{
               marginTop: 6,
               padding: "5px 12px",
               borderRadius: 5,
-              background: "#2a1a0a",
-              border: "1px solid #e67e22",
-              color: "#e67e22",
+              background: SESSION_NOTICE[sessionNotice].background,
+              border: `1px solid ${SESSION_NOTICE[sessionNotice].border}`,
+              color: SESSION_NOTICE[sessionNotice].color,
               fontSize: 12,
               fontFamily: "monospace",
             }}
           >
-            ⚠ The host ended the session. Your document is preserved.
+            {SESSION_NOTICE[sessionNotice].message}
           </div>
         )}
         {sessionStatus === "host" && (
           <button
+            disabled={sessionBusy}
             onClick={() => {
-              void invoke("end_session").then(() => {
-                setSessionStatus("idle");
-                setLanUrl(null);
-                setPublicUrl(null);
-              });
+              if (sessionBusy) return;
+              setSessionBusy(true);
+              void invoke("end_session")
+                .then(() => {
+                  applyIdleSessionState();
+                })
+                .finally(() => setSessionBusy(false));
             }}
             style={{
               marginTop: 8,
@@ -847,22 +922,24 @@ function AppContent({ username }: AppContentProps) {
               padding: "5px 16px",
               borderRadius: 5,
               border: "none",
-              background: "linear-gradient(135deg, #e74c3c, #c0392b)",
-              color: "#fff",
-              cursor: "pointer",
-              boxShadow: "0 2px 8px rgba(231,76,60,0.3)",
+              background: sessionBusy
+                ? "#5a2a2a"
+                : "linear-gradient(135deg, #e74c3c, #c0392b)",
+              color: sessionBusy ? "#c08080" : "#fff",
+              cursor: sessionBusy ? "not-allowed" : "pointer",
+              boxShadow: sessionBusy ? "none" : "0 2px 8px rgba(231,76,60,0.3)",
               letterSpacing: "0.03em",
+              transition: "all 0.15s",
             }}
           >
-            ✕ End Session
+            {sessionBusy ? "Ending…" : "✕ End Session"}
           </button>
         )}
         {sessionStatus === "guest" && (
           <button
             onClick={() => {
               void invoke("leave_session").then(() => {
-                setSessionStatus("idle");
-                setPublicUrl(null);
+                applyIdleSessionState();
               });
             }}
             style={{
