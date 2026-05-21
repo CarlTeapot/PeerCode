@@ -12,11 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useRemoteChangeListener } from "./remoteChangeListener";
 import { useSnapshotListener } from "./snapshotListener";
-import {
-  createEnqueueOp,
-  createIpcSenders,
-  createPendingOpStore,
-} from "./opQueue";
+import { createEnqueueOp, createIpcSenders } from "./opQueue";
 import {
   UsernameGate,
   overlayStyle,
@@ -252,19 +248,22 @@ function AppContent({ username }: AppContentProps) {
   const monacoRef = useRef<Monaco | null>(null);
   const isApplyingRemote = useRef(false);
   const lastAppliedSeqRef = useRef(0);
+  const shadowTextRef = useRef("");
   const opChainRef = useRef<Promise<unknown>>(Promise.resolve());
 
   const enqueueOp = useMemo(() => createEnqueueOp(opChainRef), []);
-  const pendingStore = useMemo(() => createPendingOpStore(), []);
   const { sendInsert, sendDelete, sendReplace } = useMemo(
-    () => createIpcSenders(enqueueOp, pendingStore),
-    [enqueueOp, pendingStore],
+    () => createIpcSenders(enqueueOp),
+    [enqueueOp],
   );
 
   const handleDocumentLoaded = useCallback((text: string, name: string) => {
     const ed = editorRef.current;
     if (ed) {
+      isApplyingRemote.current = true;
       ed.setValue(text);
+      isApplyingRemote.current = false;
+      shadowTextRef.current = text;
     }
     const count = ++eventCountRef.current;
     setEventLog((prev) => [
@@ -313,6 +312,7 @@ function AppContent({ username }: AppContentProps) {
     isApplyingRemote.current = true;
     editorRef.current?.setValue("");
     isApplyingRemote.current = false;
+    shadowTextRef.current = "";
   }, []);
 
   const performAction = useCallback(
@@ -532,7 +532,7 @@ function AppContent({ username }: AppContentProps) {
     eventCountRef,
     setEventLog,
     lastAppliedSeqRef,
-    pendingStore,
+    shadowTextRef,
   });
 
   useSnapshotListener({
@@ -541,7 +541,7 @@ function AppContent({ username }: AppContentProps) {
     isApplyingRemote,
     eventCountRef,
     setEventLog,
-    pendingStore,
+    shadowTextRef,
   });
 
   const [loggingEnabled, setLoggingEnabled] = useState(false);
@@ -565,48 +565,55 @@ function AppContent({ username }: AppContentProps) {
     installPlainTextPasteHandler(editorInstance);
     setStatus("editor ready");
     setStatusReady(true);
+    shadowTextRef.current = editorInstance.getModel()?.getValue() ?? "";
 
     editorInstance.onDidChangeModelContent(
       (event: editor.IModelContentChangedEvent) => {
-        // Skip changes that we ourselves applied from a remote peer.
         if (isApplyingRemote.current) return;
+
+        const model = editorInstance.getModel();
+        if (!model) return;
+
+        // Capture the user's changes relative to the shadow text (pre-edit state)
+        const changes = event.changes.map((c) => ({
+          offset: c.rangeOffset,
+          deleteLen: c.rangeLength,
+          text: c.text,
+        }));
+
+        // Revert Monaco to the shadow text — the backend will emit events
+        // that apply the confirmed edit back to Monaco.
+        isApplyingRemote.current = true;
+        const fullRange = model.getFullModelRange();
+        editorInstance.executeEdits("revert", [
+          {
+            range: new monacoInstance.Range(
+              fullRange.startLineNumber,
+              fullRange.startColumn,
+              fullRange.endLineNumber,
+              fullRange.endColumn,
+            ),
+            text: shadowTextRef.current,
+            forceMoveMarkers: false,
+          },
+        ]);
+        isApplyingRemote.current = false;
 
         const baseSeq = lastAppliedSeqRef.current;
         void (async () => {
-          for (const change of event.changes) {
-            const offset = change.rangeOffset;
-            const deleteLen = change.rangeLength;
-            const insertText = change.text;
-
-            let opType: string, opClass: string, payload: string;
-            if (deleteLen > 0 && insertText.length > 0) {
-              opType = "replace";
-              opClass = "op-replace";
-              payload = `offset=${offset}  deleteLength=${deleteLen}  text=${JSON.stringify(insertText)}`;
-            } else if (deleteLen > 0) {
-              opType = "delete";
-              opClass = "op-delete";
-              payload = `offset=${offset}  deleteLength=${deleteLen}`;
-            } else {
-              opType = "insert";
-              opClass = "op-insert";
-              payload = `offset=${offset}  text=${JSON.stringify(insertText)}`;
-            }
-
-            const wireMessage = JSON.stringify({
-              type: opType,
-              offset,
-              ...(deleteLen > 0 && { length: deleteLen }),
-              ...(insertText.length > 0 && { text: insertText }),
-            });
-
+          for (const change of changes) {
             try {
-              if (deleteLen > 0 && insertText.length > 0) {
-                await sendReplace(offset, deleteLen, insertText, baseSeq);
-              } else if (deleteLen > 0) {
-                await sendDelete(offset, deleteLen, baseSeq);
+              if (change.deleteLen > 0 && change.text.length > 0) {
+                await sendReplace(
+                  change.offset,
+                  change.deleteLen,
+                  change.text,
+                  baseSeq,
+                );
+              } else if (change.deleteLen > 0) {
+                await sendDelete(change.offset, change.deleteLen, baseSeq);
               } else {
-                await sendInsert(offset, insertText, baseSeq);
+                await sendInsert(change.offset, change.text, baseSeq);
               }
             } catch (error) {
               const count = ++eventCountRef.current;
@@ -622,18 +629,6 @@ function AppContent({ username }: AppContentProps) {
               setStatus("ipc error");
               return;
             }
-
-            const count = ++eventCountRef.current;
-            setEventLog((prev) => [
-              ...prev,
-              {
-                id: count,
-                operationClass: opClass,
-                operationLabel: `[${opType}]`,
-                payload,
-                wireMessage,
-              },
-            ]);
           }
         })();
       },

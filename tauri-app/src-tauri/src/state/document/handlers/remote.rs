@@ -57,11 +57,10 @@ fn apply_delete(
 }
 
 fn emit_changes(state: &mut DocState, app: &AppHandle, changes: Vec<RemoteChange>) {
-    let last_local_seq = state.last_local_seq_applied;
     for change in changes {
         let seq = state.mint_seq();
         state.op_log.push(seq, position_delta_of(&change));
-        let event = RemoteChangeEvent::from_change(seq, last_local_seq, change);
+        let event = RemoteChangeEvent::from_change(seq, change);
         if let Err(e) = app.emit(REMOTE_CHANGE_EVENT, &event) {
             warn!("doc actor: failed to emit remote change event: {e}");
         }

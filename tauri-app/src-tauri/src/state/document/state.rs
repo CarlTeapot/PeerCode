@@ -6,7 +6,6 @@ pub struct DocState {
     pub doc: Document,
     pub op_log: OpLog,
     pub next_seq: u64,
-    pub last_local_seq_applied: u64,
 }
 
 impl DocState {
@@ -15,7 +14,6 @@ impl DocState {
             doc,
             op_log: OpLog::new(),
             next_seq: 1,
-            last_local_seq_applied: 0,
         }
     }
 
@@ -32,6 +30,5 @@ impl DocState {
     pub fn reset_history(&mut self) {
         self.op_log = OpLog::new();
         self.next_seq = 1;
-        self.last_local_seq_applied = 0;
     }
 }

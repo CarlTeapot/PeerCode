@@ -27,30 +27,26 @@ pub enum WsConnection {
 pub enum RemoteChangeEvent {
     Insert {
         seq: u64,
-        last_local_seq: u64,
         position: u64,
         content: String,
     },
     Delete {
         seq: u64,
-        last_local_seq: u64,
         position: u64,
         length: u64,
     },
 }
 
 impl RemoteChangeEvent {
-    pub fn from_change(seq: u64, last_local_seq: u64, change: RemoteChange) -> Self {
+    pub fn from_change(seq: u64, change: RemoteChange) -> Self {
         match change {
             RemoteChange::Insert { position, content } => RemoteChangeEvent::Insert {
                 seq,
-                last_local_seq,
                 position,
                 content,
             },
             RemoteChange::Delete { position, length } => RemoteChangeEvent::Delete {
                 seq,
-                last_local_seq,
                 position,
                 length,
             },

@@ -7,20 +7,17 @@ import {
 import type { editor } from "monaco-editor";
 import type { Monaco } from "@monaco-editor/react";
 import { listen } from "@tauri-apps/api/event";
-import type { PendingOpStore } from "./opQueue";
 
 type RemoteChangeEvent =
   | {
       type: "insert";
       seq: number;
-      last_local_seq: number;
       position: number;
       content: string;
     }
   | {
       type: "delete";
       seq: number;
-      last_local_seq: number;
       position: number;
       length: number;
     };
@@ -39,7 +36,7 @@ interface UseRemoteChangeListenerArgs {
   eventCountRef: MutableRefObject<number>;
   setEventLog: Dispatch<SetStateAction<LogEntry[]>>;
   lastAppliedSeqRef: MutableRefObject<number>;
-  pendingStore: PendingOpStore;
+  shadowTextRef: MutableRefObject<string>;
 }
 
 export function useRemoteChangeListener({
@@ -49,7 +46,7 @@ export function useRemoteChangeListener({
   eventCountRef,
   setEventLog,
   lastAppliedSeqRef,
-  pendingStore,
+  shadowTextRef,
 }: UseRemoteChangeListenerArgs) {
   useEffect(() => {
     const unlistens: Array<() => void> = [];
@@ -57,7 +54,7 @@ export function useRemoteChangeListener({
 
     listen<void>("crdt://document-reset", () => {
       lastAppliedSeqRef.current = 0;
-      pendingStore.reset();
+      shadowTextRef.current = "";
     }).then((fn) => {
       if (cancelled) fn();
       else unlistens.push(fn);
@@ -73,16 +70,11 @@ export function useRemoteChangeListener({
 
       const change = e.payload;
 
-      pendingStore.pruneAtMost(change.last_local_seq);
-
       isApplyingRemote.current = true;
       try {
         if (change.type === "insert") {
-          // Use transform (strict >) so the remote insert lands *before* any
-          // pending local insert at the same offset, matching the CRDT order.
-          const startOffset = pendingStore.transform(change.position);
-          const pos = model.getPositionAt(startOffset);
-          ed.executeEdits("remote", [
+          const pos = model.getPositionAt(change.position);
+          ed.executeEdits("crdt", [
             {
               range: new mn.Range(
                 pos.lineNumber,
@@ -101,21 +93,14 @@ export function useRemoteChangeListener({
             {
               id: count,
               operationClass: "op-insert",
-              operationLabel: "[remote-insert]",
+              operationLabel: "[crdt-insert]",
               payload: `offset=${change.position}  text=${JSON.stringify(change.content)}`,
             },
           ]);
         } else {
-          // Use transformRange (non-strict >=) for both range endpoints: we are
-          // locating existing characters whose Monaco positions are shifted right
-          // by any pending local inserts at or before those positions.
-          const startOffset = pendingStore.transformRange(change.position);
-          const endOffset = pendingStore.transformRange(
-            change.position + change.length,
-          );
-          const startPos = model.getPositionAt(startOffset);
-          const endPos = model.getPositionAt(endOffset);
-          ed.executeEdits("remote", [
+          const startPos = model.getPositionAt(change.position);
+          const endPos = model.getPositionAt(change.position + change.length);
+          ed.executeEdits("crdt", [
             {
               range: new mn.Range(
                 startPos.lineNumber,
@@ -134,12 +119,13 @@ export function useRemoteChangeListener({
             {
               id: count,
               operationClass: "op-delete",
-              operationLabel: "[remote-delete]",
+              operationLabel: "[crdt-delete]",
               payload: `offset=${change.position}  length=${change.length}`,
             },
           ]);
         }
       } finally {
+        shadowTextRef.current = model.getValue();
         if (change.seq > lastAppliedSeqRef.current) {
           lastAppliedSeqRef.current = change.seq;
         }
@@ -163,6 +149,6 @@ export function useRemoteChangeListener({
     eventCountRef,
     setEventLog,
     lastAppliedSeqRef,
-    pendingStore,
+    shadowTextRef,
   ]);
 }

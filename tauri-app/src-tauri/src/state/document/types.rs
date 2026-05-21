@@ -16,14 +16,12 @@ pub enum DocOp {
         position: u64,
         content: String,
         base_seq: u64,
-        local_seq: u64,
         reply: oneshot::Sender<Result<Option<WireBlock>, String>>,
     },
     LocalDelete {
         position: u64,
         length: u64,
         base_seq: u64,
-        local_seq: u64,
         reply: oneshot::Sender<Result<DeleteSet, String>>,
     },
     LocalReplace {
@@ -31,7 +29,6 @@ pub enum DocOp {
         delete_length: u64,
         content: String,
         base_seq: u64,
-        local_seq: u64,
         reply: oneshot::Sender<Result<(DeleteSet, Option<WireBlock>), String>>,
     },
     ApplyRemoteOp {

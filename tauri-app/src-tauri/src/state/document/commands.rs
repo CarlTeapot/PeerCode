@@ -18,14 +18,12 @@ pub async fn insert(
     position: u64,
     content: String,
     base_seq: u64,
-    local_seq: u64,
 ) -> Result<(), String> {
     debug!(
-        "crdt insert request: position={}, content_len={}, base_seq={}, local_seq={}",
+        "crdt insert request: position={}, content_len={}, base_seq={}",
         position,
         content.chars().count(),
-        base_seq,
-        local_seq
+        base_seq
     );
 
     let content_len = content.chars().count();
@@ -33,7 +31,6 @@ pub async fn insert(
         position,
         content,
         base_seq,
-        local_seq,
         reply,
     })
     .await
@@ -58,18 +55,16 @@ pub async fn delete(
     position: u64,
     length: u64,
     base_seq: u64,
-    local_seq: u64,
 ) -> Result<(), String> {
     debug!(
-        "crdt delete request: position={}, length={}, base_seq={}, local_seq={}",
-        position, length, base_seq, local_seq
+        "crdt delete request: position={}, length={}, base_seq={}",
+        position, length, base_seq
     );
 
     let delete_set = request_fallible(&state.doc_tx, |reply| DocOp::LocalDelete {
         position,
         length,
         base_seq,
-        local_seq,
         reply,
     })
     .await
@@ -95,15 +90,13 @@ pub async fn replace(
     delete_length: u64,
     content: String,
     base_seq: u64,
-    local_seq: u64,
 ) -> Result<(), String> {
     debug!(
-        "crdt replace request: position={}, delete_length={}, content_len={}, base_seq={}, local_seq={}",
+        "crdt replace request: position={}, delete_length={}, content_len={}, base_seq={}",
         position,
         delete_length,
         content.chars().count(),
-        base_seq,
-        local_seq
+        base_seq
     );
 
     let (delete_set, wire_block_opt) =
@@ -112,7 +105,6 @@ pub async fn replace(
             delete_length,
             content,
             base_seq,
-            local_seq,
             reply,
         })
         .await
