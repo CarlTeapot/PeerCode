@@ -28,23 +28,13 @@ export interface PendingOp {
 }
 
 export interface PendingOpStore {
-  /** Mint a fresh localSeq, record a single delta, return the localSeq. */
   push(delta: PendingDelta): number;
-  /**
-   * Record a replace as two deltas (delete then insert) sharing one localSeq.
-   * Returns the shared localSeq.
-   */
   pushReplace(at: number, deleteLen: number, insertLen: number): number;
-  /** Drop all entries whose localSeq <= seq. */
   pruneAtMost(seq: number): void;
-  /** Shift `pos` through every surviving delta in insertion order. */
+
   transform(pos: number): number;
-  /**
-   * Clear pending entries without resetting the counter.
-   * Deliberately does NOT reset the counter so that localSeq values remain
-   * monotonically increasing across snapshot resets, avoiding false pruning
-   * of new entries by in-flight remote events that carry stale watermarks.
-   */
+
+  transformRange(pos: number): number;
   reset(): void;
 }
 
@@ -52,14 +42,27 @@ export function createPendingOpStore(): PendingOpStore {
   let counter = 0;
   let ops: PendingOp[] = [];
 
-  function shiftOne(delta: PendingDelta, pos: number): number {
-    if (delta.kind === "insert") {
-      return pos >= delta.at ? pos + delta.len : pos;
-    } else {
+  function shiftDelete(delta: PendingDelta, pos: number): number {
+    if (delta.kind === "delete") {
       if (pos <= delta.at) return pos;
       if (pos >= delta.at + delta.len) return pos - delta.len;
       return delta.at;
     }
+    return pos; // caller handles the insert case
+  }
+
+  function shiftInsertTarget(delta: PendingDelta, pos: number): number {
+    if (delta.kind === "insert") {
+      return pos > delta.at ? pos + delta.len : pos; // strict >
+    }
+    return shiftDelete(delta, pos);
+  }
+
+  function shiftRangeTarget(delta: PendingDelta, pos: number): number {
+    if (delta.kind === "insert") {
+      return pos >= delta.at ? pos + delta.len : pos; // non-strict >=
+    }
+    return shiftDelete(delta, pos);
   }
 
   return {
@@ -90,7 +93,15 @@ export function createPendingOpStore(): PendingOpStore {
     transform(pos) {
       let p = pos;
       for (const { delta } of ops) {
-        p = shiftOne(delta, p);
+        p = shiftInsertTarget(delta, p);
+      }
+      return p;
+    },
+
+    transformRange(pos) {
+      let p = pos;
+      for (const { delta } of ops) {
+        p = shiftRangeTarget(delta, p);
       }
       return p;
     },

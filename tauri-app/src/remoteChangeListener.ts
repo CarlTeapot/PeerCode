@@ -78,6 +78,8 @@ export function useRemoteChangeListener({
       isApplyingRemote.current = true;
       try {
         if (change.type === "insert") {
+          // Use transform (strict >) so the remote insert lands *before* any
+          // pending local insert at the same offset, matching the CRDT order.
           const startOffset = pendingStore.transform(change.position);
           const pos = model.getPositionAt(startOffset);
           ed.executeEdits("remote", [
@@ -104,8 +106,11 @@ export function useRemoteChangeListener({
             },
           ]);
         } else {
-          const startOffset = pendingStore.transform(change.position);
-          const endOffset = pendingStore.transform(
+          // Use transformRange (non-strict >=) for both range endpoints: we are
+          // locating existing characters whose Monaco positions are shifted right
+          // by any pending local inserts at or before those positions.
+          const startOffset = pendingStore.transformRange(change.position);
+          const endOffset = pendingStore.transformRange(
             change.position + change.length,
           );
           const startPos = model.getPositionAt(startOffset);
