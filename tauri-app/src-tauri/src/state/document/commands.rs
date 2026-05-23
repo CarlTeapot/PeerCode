@@ -4,7 +4,7 @@ use log::{debug, error, info};
 use std::sync::atomic::Ordering;
 use tauri::State;
 
-use crate::state::appstate::{AppRole, AppState};
+use crate::state::appstate::AppState;
 use crate::state::document::client::{request, request_fallible};
 use crate::state::document::types::DocOp;
 use crate::state::ws_state::WsState;
@@ -131,7 +131,7 @@ pub async fn replace(
 }
 
 async fn maybe_send_snapshot(state: &State<'_, AppState>, ws: &State<'_, WsState>) {
-    if !is_host(state) {
+    if !state.is_host() {
         return;
     }
     let count = state.ops_since_snapshot.fetch_add(1, Ordering::Relaxed) + 1;
@@ -148,10 +148,6 @@ async fn maybe_send_snapshot(state: &State<'_, AppState>, ws: &State<'_, WsState
     };
     ws.send_raw(encode_snapshot(&snap)).await;
     info!("periodic snapshot sent (after {} ops)", count);
-}
-
-fn is_host(state: &State<'_, AppState>) -> bool {
-    matches!(*state.role.lock().unwrap(), AppRole::Host { .. })
 }
 
 #[cfg(debug_assertions)]

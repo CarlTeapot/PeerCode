@@ -73,12 +73,9 @@ pub fn run() {
             if let tauri::WindowEvent::Destroyed = event {
                 info!("window destroyed; tearing down host resources");
                 let state = window.state::<AppState>();
-                let local_room_url = {
-                    let role = state.role.lock().unwrap();
-                    match &*role {
-                        AppRole::Host { local_room_url, .. } => Some(local_room_url.clone()),
-                        _ => None,
-                    }
+                let local_room_url = match state.current_role() {
+                    AppRole::Host { local_room_url, .. } => Some(local_room_url),
+                    _ => None,
                 };
                 if let Some(url) = local_room_url {
                     match state.gateway_auth_token() {

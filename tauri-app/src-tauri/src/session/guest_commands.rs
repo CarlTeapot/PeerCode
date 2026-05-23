@@ -1,9 +1,10 @@
-use crate::session::session_types::JoinInfo;
-use crate::state::appstate::{AppRole, AppState};
+use crate::session::session_types::{JoinInfo, ProcessesStoppedPayload, PROCESSES_STOPPED};
+use crate::state::appstate::AppState;
 use crate::state::document::{request, DocOp};
 use crate::state::ws_state::WsState;
+use crate::ws_management::disconnect_handler::spawn_disconnect_handler;
 use log::{debug, info, warn};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use url::Url;
 
 #[tauri::command]
@@ -20,20 +21,20 @@ pub async fn join_session(
         join_info.server_url, join_info.room_id
     );
 
-    {
-        let mut role = state.role.lock().unwrap();
-        if !role.can_initiate_session() {
-            warn!("join_session rejected: active session already exists");
-            return Err("A session is already active".into());
-        }
-        *role = AppRole::Starting;
-        debug!("join_session role set to Starting");
+    let guard = state.begin_session(app.clone()).map_err(|e| {
+        warn!("join_session rejected: {e}");
+        e
+    })?;
+    debug!("join_session role set to Starting");
+
+    if state.kill_host_processes() {
+        info!("join_session killed leftover host processes before connecting as guest");
+        let _ = app.emit(PROCESSES_STOPPED, ProcessesStoppedPayload {});
     }
 
     let guest_client_id = request(&state.doc_tx, |reply| DocOp::GetClientId { reply })
         .await
         .map_err(|e| {
-            *state.role.lock().unwrap() = AppRole::Undecided;
             warn!("join_session: failed to read client_id from doc actor: {e}");
             e
         })?
@@ -48,10 +49,10 @@ pub async fn join_session(
         join_info.room_id, guest_client_id
     );
 
-    ws.connect(&ws_url, join_info.room_id.clone(), app.clone())
+    let disconnect_rx = ws
+        .connect(&ws_url, join_info.room_id.clone(), app.clone())
         .await
         .map_err(|e| {
-            *state.role.lock().unwrap() = AppRole::Undecided;
             warn!("join_session websocket connect failed; role reset to idle: {e}");
             e.to_string()
         })?;
@@ -60,31 +61,25 @@ pub async fn join_session(
         join_info.room_id
     );
 
-    let should_disconnect = {
-        let mut role = state.role.lock().unwrap();
-        if matches!(*role, AppRole::Starting) {
-            *role = AppRole::Guest {
-                room_id: join_info.room_id.clone(),
-                server_url: join_info.server_url.clone(),
-            };
+    match state.complete_guest(
+        guard,
+        join_info.room_id.clone(),
+        join_info.server_url.clone(),
+    ) {
+        Ok(_) => {
             info!(
                 "join_session role transitioned to Guest: room_id={}",
                 join_info.room_id
             );
-            false
-        } else {
-            warn!("join_session cancelled during role transition; disconnecting websocket");
-            true
+            spawn_disconnect_handler(app, disconnect_rx);
+            Ok(())
         }
-    };
-    if !should_disconnect {
-        return Ok(());
+        Err(_) => {
+            warn!("join_session cancelled during role transition; disconnecting websocket");
+            let _ = ws.disconnect().await;
+            Err("Join session was cancelled".into())
+        }
     }
-
-    let _ = ws.disconnect().await;
-    info!("join_session websocket disconnected after cancellation");
-
-    Err("Join session was cancelled".into())
 }
 
 #[tauri::command]

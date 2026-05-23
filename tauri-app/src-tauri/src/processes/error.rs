@@ -4,6 +4,7 @@ use crate::state::ws_state::WsState;
 use tauri::{AppHandle, Emitter, Manager};
 
 pub fn emit_error(app: &AppHandle, message: String) {
+    log::error!("session error: {message}");
     let state = app.state::<AppState>();
     state.leave_session(&app.state::<WsState>());
     state.kill_host_processes();

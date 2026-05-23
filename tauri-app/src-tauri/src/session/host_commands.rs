@@ -1,70 +1,63 @@
 use crate::gateway::gateway_api::{create_room, destroy_room};
 use crate::processes::process_coordinator;
-use crate::processes::types::SidecarStatus;
 use crate::session::session_types::{HostSessionSetup, SessionReadyPayload, SESSION_READY};
 use crate::state::appstate::{AppRole, AppState};
 use crate::state::document::{request, DocOp};
 use crate::state::ws_state::WsState;
+use crate::ws_management::disconnect_handler::spawn_disconnect_handler;
+use crate::ws_management::ws_types::DisconnectReason;
 use crdt_core::encode_snapshot;
 use log::{debug, error, info, warn};
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::sync::oneshot;
 
 #[tauri::command]
 pub async fn host_session(app: AppHandle) -> Result<(), String> {
     debug!("start_host_session requested");
 
-    {
-        let state = app.state::<AppState>();
-        let mut role = state.role.lock().unwrap();
-        if !matches!(*role, AppRole::Undecided) {
-            warn!(
-                "start_host_session rejected: expected idle role, got {}",
-                role.status()
-            );
-            return Err("A session is already active".into());
-        }
-        *role = AppRole::Starting;
-        debug!("start_host_session role set to Starting");
-    }
+    let guard = app
+        .state::<AppState>()
+        .begin_session(app.clone())
+        .map_err(|e| {
+            warn!("start_host_session rejected: {e}");
+            e
+        })?;
+    debug!("start_host_session role set to Starting");
 
-    ensure_gateway_spawn_allowed(&app)?;
+    let setup = prepare_host_session(&app).await?;
 
-    let setup = match prepare_host_session(&app).await {
-        Ok(result) => result,
-        Err(e) => {
-            rollback_starting_role(&app);
-            return Err(e);
-        }
-    };
+    let disconnect_rx = connect(&app, setup.port, setup.room_id.clone()).await?;
 
-    transition_to_host(&app, &setup);
+    app.state::<AppState>().complete_host(
+        guard,
+        setup.room_id.clone(),
+        setup.lan_url.clone(),
+        setup.public_url.clone(),
+        setup.local_room_url.clone(),
+        setup.public_room_url.clone(),
+    )?;
     emit_session_ready(&app, &setup)?;
     info!(
-        "start_host_session workflow ready: room_id={} port={}",
+        "start_host_session completed: room_id={} port={}",
         setup.room_id, setup.port
     );
-
-    connect(app, setup.port, setup.room_id).await;
-    info!("start_host_session completed");
+    spawn_disconnect_handler(app, disconnect_rx);
     Ok(())
 }
 
 #[tauri::command]
 pub async fn end_session(state: State<'_, AppState>, ws: State<'_, WsState>) -> Result<(), String> {
     info!("end_session requested");
-    let (room_id, local_room_url) = {
-        let role = state.role.lock().unwrap();
-        match &*role {
-            AppRole::Host {
-                room_id,
-                local_room_url,
-                ..
-            } => (room_id.clone(), local_room_url.clone()),
-            _ => {
-                warn!("end_session rejected: not a host");
-                return Err("Not currently hosting a session".into());
-            }
+    let (room_id, local_room_url) = match state.current_role() {
+        AppRole::Host {
+            room_id,
+            local_room_url,
+            ..
+        } => (room_id, local_room_url),
+        _ => {
+            warn!("end_session rejected: not a host");
+            return Err("Not currently hosting a session".into());
         }
     };
     let gateway_auth_token = state
@@ -73,13 +66,11 @@ pub async fn end_session(state: State<'_, AppState>, ws: State<'_, WsState>) -> 
 
     destroy_room(local_room_url, &gateway_auth_token).await?;
     state.leave_session(&ws);
-    let previous_role = {
-        let mut role = state.role.lock().unwrap();
-        let prev = role.clone();
-        *role = AppRole::Undecided;
-        prev
-    };
-    info!("role reset to idle from status={}", previous_role.status());
+
+    match state.transition_role(AppRole::Undecided) {
+        Ok(prev) => info!("role reset to idle from status={}", prev.status()),
+        Err(e) => warn!("end_session: role already reset by disconnect handler ({e})"),
+    }
 
     info!("end_session completed: room_id={room_id}");
     Ok(())
@@ -93,51 +84,40 @@ pub fn kill_host_processes(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
-fn ensure_gateway_spawn_allowed(app: &AppHandle) -> Result<(), String> {
-    let state = app.state::<AppState>();
-    let procs = state.processes.lock().unwrap();
-    let should_launch_processes = procs
-        .gateway
-        .as_ref()
-        .map(|s| s.status == SidecarStatus::Disabled)
-        .unwrap_or(true);
-    if !should_launch_processes {
-        rollback_starting_role(app);
-        return Err("Gateway sidecar is already running; refusing to launch a duplicate".into());
-    }
-    Ok(())
-}
-
 async fn prepare_host_session(app: &AppHandle) -> Result<HostSessionSetup, String> {
-    info!("start_host_session launching gateway/tunnel workflow");
-    let workflow = process_coordinator::launch(app.clone()).await?;
-    let room_id = create_room(workflow.port, &workflow.gateway_auth_token).await?;
-    let local_room_url = format!("ws://127.0.0.1:{}/ws?room={}", workflow.port, room_id);
-    let public_url = workflow.public_url;
-    let public_room_url = public_url
+    let wf = match app.state::<AppState>().combined_workflow_result() {
+        Some(wf) => {
+            info!("reusing existing gateway/tunnel: port={}", wf.port);
+            wf
+        }
+        None => {
+            info!("launching gateway/tunnel workflow");
+            let wf = process_coordinator::launch(app.clone()).await?;
+            {
+                let state = app.state::<AppState>();
+                let mut procs = state.processes.lock().unwrap();
+                procs.gateway_port = Some(wf.port);
+                procs.gateway_lan_url = wf.lan_url.clone();
+            }
+            wf
+        }
+    };
+
+    let room_id = create_room(wf.port, &wf.gateway_auth_token).await?;
+    let local_room_url = format!("ws://127.0.0.1:{}/ws?room={room_id}", wf.port);
+    let public_room_url = wf
+        .public_url
         .as_ref()
-        .map(|url| format!("{url}?room={room_id}"));
+        .map(|u| format!("{u}?room={room_id}"));
 
     Ok(HostSessionSetup {
-        room_id: room_id.clone(),
-        port: workflow.port,
-        lan_url: workflow.lan_url,
-        public_url,
+        room_id,
+        port: wf.port,
+        lan_url: wf.lan_url,
+        public_url: wf.public_url,
         local_room_url,
         public_room_url,
     })
-}
-
-fn transition_to_host(app: &AppHandle, setup: &HostSessionSetup) {
-    let state = app.state::<AppState>();
-    let mut role = state.role.lock().unwrap();
-    *role = AppRole::Host {
-        room_id: setup.room_id.clone(),
-        lan_url: setup.lan_url.clone(),
-        public_url: setup.public_url.clone(),
-        local_room_url: setup.local_room_url.clone(),
-        public_room_url: setup.public_room_url.clone(),
-    };
 }
 
 fn emit_session_ready(app: &AppHandle, setup: &HostSessionSetup) -> Result<(), String> {
@@ -153,43 +133,36 @@ fn emit_session_ready(app: &AppHandle, setup: &HostSessionSetup) -> Result<(), S
         .map_err(|e| format!("failed to emit session ready event: {e}"))
 }
 
-fn rollback_starting_role(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    let mut role = state.role.lock().unwrap();
-    if matches!(*role, AppRole::Starting) {
-        *role = AppRole::Undecided;
-        warn!("start_host_session failed; role rolled back to idle");
-    }
-}
-
-async fn connect(app: AppHandle, port: u16, room_id: String) {
+async fn connect(
+    app: &AppHandle,
+    port: u16,
+    room_id: String,
+) -> Result<oneshot::Receiver<DisconnectReason>, String> {
     debug!(
         "host local connect requested: room_id={} port={}",
         room_id, port
     );
-    let host_client_id = match read_client_id(&app).await {
-        Ok(cid) => cid,
-        Err(e) => {
-            error!("host connect: failed to read client_id from doc actor: {e}");
-            return;
-        }
-    };
+    let host_client_id = read_client_id(app).await.map_err(|e| {
+        error!("host connect: failed to read client_id from doc actor: {e}");
+        e
+    })?;
 
     let local_ws_url =
         format!("ws://127.0.0.1:{port}/ws?room={room_id}&client_id={host_client_id}");
     let ws = app.state::<WsState>();
-    if let Err(e) = ws
+    let disconnect_rx = ws
         .connect(&local_ws_url, room_id.clone(), app.clone())
         .await
-    {
-        error!("local websocket connection failed (session still running): {e}");
-    } else {
-        info!(
-            "local websocket connection established for host session: room_id={}",
-            room_id
-        );
-        send_initial_snapshot(&app).await;
-    }
+        .map_err(|e| {
+            error!("local websocket connection failed: {e}");
+            e.to_string()
+        })?;
+    info!(
+        "local websocket connection established for host session: room_id={}",
+        room_id
+    );
+    send_initial_snapshot(app).await;
+    Ok(disconnect_rx)
 }
 
 async fn read_client_id(app: &AppHandle) -> Result<u64, String> {

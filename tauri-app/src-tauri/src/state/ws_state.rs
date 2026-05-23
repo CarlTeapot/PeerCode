@@ -4,13 +4,13 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use log::{debug, info, warn};
 use tauri::AppHandle;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::timeout;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use crate::state::document::wire_dispatch::process_loop;
 use crate::ws_management::ws_receiver::receive_loop;
-use crate::ws_management::ws_types::{WsConnection, WsError};
+use crate::ws_management::ws_types::{DisconnectReason, WsConnection, WsError};
 use crate::ws_management::ws_writer::write_loop;
 
 pub struct WsState {
@@ -37,7 +37,7 @@ impl WsState {
         url: &str,
         session_id: String,
         app: AppHandle,
-    ) -> Result<(), WsError> {
+    ) -> Result<oneshot::Receiver<DisconnectReason>, WsError> {
         debug!("starting ws connection request: url={url} session_id={session_id}");
         {
             let mut guard = self.connection.lock().await;
@@ -80,6 +80,7 @@ impl WsState {
         let (sink, stream) = ws_stream.split();
         let (write_tx, write_rx) = mpsc::channel::<Message>(64);
         let (op_tx, op_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let (disconnect_tx, disconnect_rx) = oneshot::channel::<DisconnectReason>();
         debug!("ws channel created: write_buffer_capacity=64");
         let processor = tokio::task::spawn(process_loop(op_rx, app.clone()));
         let sender = tokio::task::spawn(write_loop(sink, write_rx));
@@ -88,7 +89,7 @@ impl WsState {
             Arc::clone(&self.connection),
             Arc::clone(&self.write_tx),
             op_tx,
-            app.clone(),
+            disconnect_tx,
         ));
         debug!("ws sender/receiver/processor tasks spawned");
 
@@ -109,7 +110,7 @@ impl WsState {
         };
 
         info!("websocket connected: url={url} room={session_id}");
-        Ok(())
+        Ok(disconnect_rx)
     }
 
     pub async fn send_raw(&self, bytes: Vec<u8>) {

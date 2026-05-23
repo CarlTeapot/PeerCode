@@ -60,6 +60,12 @@ pub struct SnapshotAppliedEvent {
 }
 
 #[derive(Debug)]
+pub enum DisconnectReason {
+    SessionEnded,
+    ConnectionLost,
+}
+
+#[derive(Debug)]
 pub enum WsError {
     AlreadyConnected,
     Timeout { url: String, secs: u64 },

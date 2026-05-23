@@ -105,6 +105,8 @@ The gateway requires `Authorization: Bearer <GATEWAY_AUTH_TOKEN>` on all routes 
 
 `AppState` (`state/appstate.rs`) wraps `Mutex<AppRole>` (the session FSM: `Undecided | Starting | Host{…} | Guest{…}`), `Mutex<HostProcesses>` (gateway+tunnel sidecar handles and the auth token), the doc actor's `DocSender`, and counters used for snapshot cadence. `WsState` holds the live websocket and its task handles. Both are `tauri::Manager`-managed singletons set up in `lib.rs`.
 
+All session lifecycle transitions go through `AppState` — see `.claude/rules/session-state-machine.md` for the FSM rules and guard pattern.
+
 When the host window is destroyed (see `on_window_event` in `lib.rs`), `destroy_room` and `kill_host_processes` run synchronously to avoid leaving orphaned sidecars.
 
 ## Conventions worth knowing
