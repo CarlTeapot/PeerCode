@@ -42,13 +42,20 @@ export function createIpcSenders(
   invokeFn: InvokeFn = invoke,
 ): IpcSenders {
   return {
-    sendInsert: (position, content, baseSeq) =>
-      enqueueOp(() => invokeFn("insert", { position, content, baseSeq })),
-    sendDelete: (position, length, baseSeq) =>
-      enqueueOp(() => invokeFn("delete", { position, length, baseSeq })),
-    sendReplace: (position, deleteLength, content, baseSeq) =>
-      enqueueOp(() =>
+    sendInsert(position, content, baseSeq) {
+      return enqueueOp(() =>
+        invokeFn("insert", { position, content, baseSeq }),
+      );
+    },
+
+    sendDelete(position, length, baseSeq) {
+      return enqueueOp(() => invokeFn("delete", { position, length, baseSeq }));
+    },
+
+    sendReplace(position, deleteLength, content, baseSeq) {
+      return enqueueOp(() =>
         invokeFn("replace", { position, deleteLength, content, baseSeq }),
-      ),
+      );
+    },
   };
 }

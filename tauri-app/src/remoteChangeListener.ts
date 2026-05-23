@@ -9,8 +9,18 @@ import type { Monaco } from "@monaco-editor/react";
 import { listen } from "@tauri-apps/api/event";
 
 type RemoteChangeEvent =
-  | { type: "insert"; seq: number; position: number; content: string }
-  | { type: "delete"; seq: number; position: number; length: number };
+  | {
+      type: "insert";
+      seq: number;
+      position: number;
+      content: string;
+    }
+  | {
+      type: "delete";
+      seq: number;
+      position: number;
+      length: number;
+    };
 
 interface LogEntry {
   id: number;
@@ -26,6 +36,7 @@ interface UseRemoteChangeListenerArgs {
   eventCountRef: MutableRefObject<number>;
   setEventLog: Dispatch<SetStateAction<LogEntry[]>>;
   lastAppliedSeqRef: MutableRefObject<number>;
+  shadowTextRef: MutableRefObject<string>;
 }
 
 export function useRemoteChangeListener({
@@ -35,6 +46,7 @@ export function useRemoteChangeListener({
   eventCountRef,
   setEventLog,
   lastAppliedSeqRef,
+  shadowTextRef,
 }: UseRemoteChangeListenerArgs) {
   useEffect(() => {
     const unlistens: Array<() => void> = [];
@@ -42,6 +54,7 @@ export function useRemoteChangeListener({
 
     listen<void>("crdt://document-reset", () => {
       lastAppliedSeqRef.current = 0;
+      shadowTextRef.current = "";
     }).then((fn) => {
       if (cancelled) fn();
       else unlistens.push(fn);
@@ -56,11 +69,12 @@ export function useRemoteChangeListener({
       if (!model) return;
 
       const change = e.payload;
+
       isApplyingRemote.current = true;
       try {
         if (change.type === "insert") {
           const pos = model.getPositionAt(change.position);
-          ed.executeEdits("remote", [
+          ed.executeEdits("crdt", [
             {
               range: new mn.Range(
                 pos.lineNumber,
@@ -79,14 +93,14 @@ export function useRemoteChangeListener({
             {
               id: count,
               operationClass: "op-insert",
-              operationLabel: "[remote-insert]",
+              operationLabel: "[crdt-insert]",
               payload: `offset=${change.position}  text=${JSON.stringify(change.content)}`,
             },
           ]);
         } else {
           const startPos = model.getPositionAt(change.position);
           const endPos = model.getPositionAt(change.position + change.length);
-          ed.executeEdits("remote", [
+          ed.executeEdits("crdt", [
             {
               range: new mn.Range(
                 startPos.lineNumber,
@@ -105,12 +119,13 @@ export function useRemoteChangeListener({
             {
               id: count,
               operationClass: "op-delete",
-              operationLabel: "[remote-delete]",
+              operationLabel: "[crdt-delete]",
               payload: `offset=${change.position}  length=${change.length}`,
             },
           ]);
         }
       } finally {
+        shadowTextRef.current = model.getValue();
         if (change.seq > lastAppliedSeqRef.current) {
           lastAppliedSeqRef.current = change.seq;
         }
@@ -134,5 +149,6 @@ export function useRemoteChangeListener({
     eventCountRef,
     setEventLog,
     lastAppliedSeqRef,
+    shadowTextRef,
   ]);
 }
