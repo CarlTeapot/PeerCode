@@ -126,9 +126,17 @@ impl Document {
     /// Visible-text character position of the block identified by `target`.
     /// Backed by the position index: O(log n) instead of an O(n) linked-list walk.
     pub(super) fn visible_position_of(&self, target: BlockId) -> u64 {
-        self.position_index
+        let t0 = std::time::Instant::now();
+        let result = self
+            .position_index
             .position_of(target)
-            .unwrap_or_else(|| self.position_index.visible_len())
+            .unwrap_or_else(|| self.position_index.visible_len());
+        debug!(
+            "visible_position_of: {}µs  doc_blocks={}",
+            t0.elapsed().as_micros(),
+            self.store.total_blocks(),
+        );
+        result
     }
 
     /// Locate the block and intra-block offset that corresponds to a visible
@@ -138,8 +146,13 @@ impl Document {
         &self,
         position: u64,
     ) -> (Option<BlockId>, u64, Option<BlockId>) {
-        debug!("get_block_and_offset_by_position({:?})", position);
+        let t0 = std::time::Instant::now();
         let r = self.position_index.find_at_position(position);
+        debug!(
+            "get_block_and_offset_by_position: {}µs  doc_blocks={}",
+            t0.elapsed().as_micros(),
+            self.store.total_blocks(),
+        );
         (r.id, r.offset, r.tail_id)
     }
 }
